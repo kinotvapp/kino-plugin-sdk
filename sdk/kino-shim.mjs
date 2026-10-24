@@ -17,7 +17,7 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, createPublicK
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { anyFetchRefusal, anyHostBudget, contract, fetchAnyHost, hostMatches, isUserServer, kb, schemeAllowed } from "./contract.mjs";
+import { anyFetchRefusal, anyHostBudget, contract, fetchAnyHost, hostMatches, isUserServer, kb, schemeAllowed, syncCallCap } from "./contract.mjs";
 import { decodeCipherKey } from "./seal.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "./kino-rank.mjs";
 
@@ -779,8 +779,13 @@ function deviceFor(device, env) {
  * kino.device (Kino 0.9.55, contract.kinoDevice): [device] ("phone" or "tv", run.mjs --device), else env KINO_DEVICE,
  * else "phone". Anything else throws: a typo must not silently test the other UI.
  */
-export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, nuvioFixture = undefined, env = process.env, now = Date.now } = {}) {
+export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, nuvioFixture = undefined, env = process.env, now = Date.now, syncCall = false } = {}) {
   const f = contract.fetch;
+  // [syncCall]: this kino runs a syncProvider's syncPull/syncPush (contract.fetch.syncCall): its requests and responses may
+  // carry the declared blob, ceil(sync.maxBlobBytes * 4/3) + envelopeChars, like the app; every other call keeps the defaults.
+  const syncCap = syncCall ? syncCallCap(manifest) : null;
+  const maxRequestChars = syncCap ?? f.maxRequestChars;
+  const maxBodyBytes = syncCap ?? f.maxBodyBytes;
   const kinoDevice = deviceFor(device, env);
   const storage = loadJson(storageFile, {});
   // An entry is a bare string (permanent, the format before ttlMs existed) or { v, e } (expires at
@@ -816,6 +821,16 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
   // kino.seed(session) (Kino 0.9.55, contract.kinoSeed): the kit sends nothing anywhere. It applies the app's own filter and says
   // which keys Kino would keep (never the values: they are tokens), and, like kino.log.report, that the app sends only with
   // "telemetry" on. Synchronous, answers nothing, never throws into the plugin.
+  // kino.sync.remoteChanged() (Kino 0.9.74, contract.additiveFromApp["kino.sync.remoteChanged"]): a realtime syncProvider tells Kino its
+  // remote changed. The kit has no app to tell: it checks the manifest the way Kino does and logs.
+  let remoteChangedLogged = false;
+  const kinoSync = Object.freeze({
+    remoteChanged: Object.freeze(function remoteChanged() {
+      const ok = manifest && Array.isArray(manifest.capabilities) && manifest.capabilities.includes("syncProvider") && manifest.sync && manifest.sync.mode === "realtime";
+      if (!ok) throw Object.assign(new Error('kino.sync.remoteChanged() needs the "syncProvider" capability with "sync": { "mode": "realtime" }'), { code: "not_allowed" });
+      if (!remoteChangedLogged) { remoteChangedLogged = true; logLine("[kino.sync.remoteChanged]", ["Kino would pull now (it accepts one signal every 30 s; this line is logged once)"]); }
+    }),
+  });
   const kinoSeed = Object.freeze(function seed(session) {
     try {
       const S = contract.kinoSeed;
@@ -1007,8 +1022,10 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
     // app, where the prelude computes it on the marker-laden request before it ever crosses to the
     // Kotlin side that substitutes.
     let body = requestBody(o.body, headers);
-    const size = String(url).length + JSON.stringify(headers).length + (body ? (typeof body === "string" ? body.length : body.length * 2) : 0);
-    if (size > f.maxRequestChars) throw kinoError("too_large", `request too large (over ${kb(f.maxRequestChars)})`);
+    // Counted as the app does: the request crosses as JSON text, so a { base64 } body counts its base64 characters.
+    const bodyChars = body ? (typeof body === "string" ? body.length : o.body && typeof o.body === "object" && "base64" in o.body ? String(o.body.base64).length : body.length * 2) : 0;
+    const size = String(url).length + JSON.stringify(headers).length + bodyChars;
+    if (size > maxRequestChars) throw kinoError("too_large", `request too large (over ${kb(maxRequestChars)})`);
     let current;
     try { current = new URL(String(url)); } catch { throw kinoError("invalid_request", "invalid URL: " + String(url).slice(0, 200)); }
     if (pluginSecrets) {
@@ -1137,7 +1154,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
           tape.push({ key, status, headers: storedHeaders, body: storedBody });
         }
       }
-      if (bytes.length > f.maxBodyBytes) throw kinoError("too_large", `response too large (over ${kb(f.maxBodyBytes)})`);
+      if (bytes.length > maxBodyBytes) throw kinoError("too_large", `response too large (over ${kb(maxBodyBytes)})`);
       const location = headerList.find(([k]) => k === "location");
       if ([301, 302, 303, 307, 308].includes(status) && location && redirect === "follow") {
         if (status === 303 || ((status === 301 || status === 302) && method === "POST")) { method = "GET"; body = undefined; }
@@ -1450,6 +1467,8 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
     device: kinoDevice,
     // Kino 0.9.55 (contract.additiveFromApp["kino.seed"]): share one anonymous guest session; the kit only reports what Kino would keep.
     seed: kinoSeed,
+    // Kino 0.9.74 (contract.additiveFromApp["kino.sync.remoteChanged"]): a realtime syncProvider signals its remote changed.
+    sync: kinoSync,
     fetch: fetchGated,
     html: Object.freeze({
       select() {

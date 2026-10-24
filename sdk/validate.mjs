@@ -59,6 +59,12 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes(contract.kinoNuvio.capability)) line(contract.kinoNuvio.consentLine.es);
   // apiVersion 7 "tracking": in red, the plugin's declared hosts named (PluginConsent / Tracking.consentLine).
   if (m.capabilities.includes(contract.tracking.capability)) line(trackingConsentLine(m.hosts || []), true);
+  // apiVersion 12 "syncProvider" (PluginConsent.extraLines): with sync.keySecret the plugin and its service can read the data,
+  // always red; without it the blob is unreadable to them, red only when it may be stored on any public server.
+  if (m.capabilities.includes(contract.manifest.sync.requires)) {
+    if (m.sync && typeof m.sync.keySecret === "string") line(contract.manifest.sync.consentLineReadable, true);
+    else line(contract.manifest.sync.consentLine, fetchAnyHost(m));
+  }
   // apiVersion 7 "segments": a plain line, not red (it only learns which title plays): PluginConsent / Segments.CONSENT_LINE.
   if (m.capabilities.includes(contract.segments.capability)) line(contract.segments.consentLine);
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
@@ -120,13 +126,13 @@ export async function runUiFunction(plugin, run, args, m, servers) {
       drops.push(...checked.drops);
       return out(checked.value);
     }
-    const value = checkSettingsOutput(run, answer, m, undefined, (d) => drops.push(d));
+    const value = checkSettingsOutput(run, answer, m, undefined, (d) => drops.push(d), run === "action" ? args[0] : null);
     if (run === "settingsStatus") {
       Object.entries(value).forEach(([k, t]) => notes.push(`settingsStatus: ${k} shows "${t}"`));
       const missing = settings.filter((x) => x.type === "status" && !(x.key in value)).map((x) => x.key);
       if (missing.length) notes.push(`settingsStatus: no line for ${missing.join(", ")} (Kino shows nothing there)`);
     }
-    if (run === "action") notes.push(`action(${JSON.stringify(args[0])}): ${value.message ? `Kino shows "${value.message}"` : "no message"}${value.refresh ? ", then reads settingsStatus again" : ""}${value.clearSettings.length ? `, clears ${value.clearSettings.join(", ")}` : ""}`);
+    if (run === "action") notes.push(`action(${JSON.stringify(args[0])}): ${value.message ? `Kino shows "${value.message}"` : "no message"}${value.refresh ? ", then reads settingsStatus again" : ""}${value.clearSettings.length ? `, clears ${value.clearSettings.join(", ")}` : ""}${value.link ? `, then asks "Is this you, ${value.link.candidate}?" and runs ${JSON.stringify(value.link.confirm)} only if the person confirms` : ""}${value.link === null ? ", and shows its generic error for the link it cannot use" : ""}${value.setSettings ? `, then saves ${Object.keys(value.setSettings).join(", ")} as if typed` : ""}${value.setSettings === null ? ", and shows its generic error for the setSettings it cannot apply" : ""}`);
     if (run === "validateSettings" && value.accepted) notes.push("validateSettings accepts the save");
     if (run === "validateSettings" && !value.accepted) notes.push(`validateSettings refuses the save: ${JSON.stringify(value)}`);
     return out(value);

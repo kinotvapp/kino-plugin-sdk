@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, mediaOf, contract, englishCoverage, imageVerdict, localizedSettings, sectionLabel, markSearchHits, metaAnswer, optInt, requiredExports, segmentSkip, segmentsAnswer, validateManifest } from "../contract.mjs";
+import { checkOutput, checkSettingsOutput, mediaOf, contract, englishCoverage, imageVerdict, localizedSettings, sectionLabel, markSearchHits, metaAnswer, optInt, requiredExports, segmentSkip, segmentsAnswer, validateManifest, checkSyncAnswer, syncCallCap } from "../contract.mjs";
 import { createKino, errorReport, shownSentence, signingLane } from "../kino-shim.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { contrast, deltaE, formatRatio, luminance, resolvePalette } from "../palette.mjs";
@@ -35,10 +35,10 @@ const manifest = (extra = {}) => JSON.stringify({
 const NEEDS_KINO_REPO = "needs files of the Kino repo that this template does not have";
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 11);
+  assert.equal(contract.apiVersion, 12);
   // apiVersion 5 stays what Kino 0.9.45 made it: the author-signed entry, nothing else.
   assert.equal(contract.manifest.signature.apiVersion, 5);
-  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles", "tracking", "segments", "playlists", "externalResolve", "nuvio"]);
+  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles", "tracking", "segments", "playlists", "externalResolve", "nuvio", "syncProvider"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm", "scopedSearch", "externalResolve", "nuvio"]);
   assert.deepEqual(contract.permissions, []);
 });
@@ -1432,7 +1432,7 @@ test("secrets: parsed with apiVersion 4, ignored below it, and its Spanish messa
 });
 
 test("migrate: a consent line, and an update that adds it re-asks like any new reach", () => {
-  assert.deepEqual(contract.capabilities.needsApproval, ["download", "drm", "channels", "migrate", "tracking", "nuvio"]);
+  assert.deepEqual(contract.capabilities.needsApproval, ["download", "drm", "channels", "migrate", "tracking", "nuvio", "syncProvider"]);
   assert.deepEqual(consentLines(validateManifest(manifest({ apiVersion: 6, capabilities: ["search", "resolve", "migrate"] })).manifest),
     [{ text: "Revisar lo que tienes guardado (biblioteca, historial, favoritos) para pasarlo a este plugin", danger: false }]);
 });
@@ -3389,6 +3389,116 @@ test("an action's clearSettings keeps the plugin's own optional valued settings,
   assert.deepEqual(checkSettingsOutput("action", { clearSettings: keys }, many).clearSettings, keys.slice(0, 12));
 });
 
+// --- configuration aids: link and help settings (apiVersion 12), as PluginSettings.parseSettings ---
+
+test("link and help settings are judged like the app: https links, plain help texts, at most 4 of each", () => {
+  const v = (settings, apiVersion = 12) => validateManifest(manifest({ apiVersion, settings }));
+  const errs = (r) => (r.ok === false ? r.message : "");
+  const link = (url, extra = {}) => ({ key: "bot", type: "link", label: "Abrir @BotFather", url, ...extra });
+  const help = (extra = {}) => ({ key: "steps", type: "help", body: "Paso 1\nPaso 2", ...extra });
+  assert.equal(errs(v([link("https://t.me/BotFather", { labelEn: "Open @BotFather" }), help({ title: "Cómo", bodyEn: "Step 1" })])), "");
+  assert.equal(contract.settings.configAids.maxLinks, 4);
+  for (const bad of ["http://t.me/BotFather", "https://ana:pw@t.me/x", "https://@t.me/x", "javascript:alert(1)", "t.me/x", "", 7, "https://t.me/" + "a".repeat(2048)]) {
+    assert.match(errs(v([link(bad)])), /type link needs a "url"/, String(bad));
+  }
+  assert.match(errs(v([{ key: "bot", type: "link", url: "https://t.me/x" }])), /needs a label/);
+  assert.match(errs(v([link("https://t.me/x")], 11)), /needs apiVersion 12/);
+  assert.match(errs(v([help()], 11)), /needs apiVersion 12/);
+  assert.match(errs(v([1, 2, 3, 4, 5].map((i) => link("https://t.me/a" + i, { key: "l" + i })))), /more than 4 settings of type link/);
+  assert.match(errs(v([1, 2, 3, 4, 5].map((i) => help({ key: "h" + i })))), /more than 4 settings of type help/);
+  assert.match(errs(v([help({ body: "a".repeat(2001) })])), /"body" of the setting "steps"/);
+  assert.match(errs(v([help({ title: "t".repeat(61) })])), /"title" of the setting "steps"/);
+  assert.match(errs(v([{ key: "steps", type: "help" }])), /needs a "body"/);
+  assert.match(errs(v([{ key: "t", label: "T", type: "text", url: "https://t.me/x" }])), /Only a setting of type link has "url"/);
+  assert.match(errs(v([link("https://t.me/x", { body: "x" })])), /Only a setting of type help/);
+  // Control, invisible formatting and direction characters are refused in a link label and in help texts; a body keeps \n.
+  for (const bad of ["Abrir\u202E@BotFather", "Abrir\u200B", "Abrir\u0007", "Abrir\nBot", "Abrir\u2028x"]) {
+    assert.match(errs(v([link("https://t.me/x", { label: bad })])), /control, invisible or direction/, JSON.stringify(bad));
+    assert.match(errs(v([link("https://t.me/x", { labelEn: bad })])), /control, invisible or direction/, JSON.stringify(bad));
+    assert.match(errs(v([help({ title: bad })])), /control, invisible or direction/, JSON.stringify(bad));
+  }
+  for (const bad of ["Paso\u202E1", "Pa\u200Bso", "Pa\u0000so", "Pa\u2029so"]) assert.match(errs(v([help({ body: bad })])), /control, invisible or direction/, JSON.stringify(bad));
+  assert.equal(errs(v([help({ body: "Paso 1\r\nPaso 2\n\nPaso 3" })])), "");
+  // Markup is just text: accepted, and Kino shows it literally.
+  assert.equal(errs(v([help({ body: "<b>Paso</b> <a href=\"https://x.example\">x</a>" })])), "");
+});
+
+// --- setSettings (additive action.setSettings, Kino 0.9.74), as PluginSettingsUi.parseActionResult ---
+
+test("an action's setSettings keeps the plugin's own plain settings and refuses the whole field on any bad entry", () => {
+  const m = JSON.parse(manifest({ apiVersion: 6, settings: [
+    { key: "chatId", label: "Chat", type: "text" },
+    { key: "name", label: "Nombre", type: "text", required: true },
+    { key: "server", label: "Servidor", type: "url" },
+    { key: "quality", label: "Calidad", type: "select", options: [{ value: "hd", label: "HD" }, { value: "sd", label: "SD" }] },
+    { key: "botToken", label: "Token", type: "password" },
+    { key: "hd", label: "HD", type: "toggle" },
+    { key: "linked", label: "Estado", type: "status" },
+    { key: "link", label: "Vincular", type: "action" },
+  ] }));
+  const run = (set, extra = {}, scrub = (t) => t) => { const drops = []; const out = checkSettingsOutput("action", { message: "Listo", setSettings: set, ...extra }, m, scrub, (d) => drops.push(d), "link"); return { out, drops }; };
+  assert.deepEqual(run({ chatId: " 42 ", quality: "sd" }).out,
+    { message: "Listo", refresh: false, clearSettings: [], setSettings: { chatId: "42", quality: "sd" } });
+  assert.equal(contract.settings.ui.setSettings.maxEntries, 8);
+  // Never a url setting: its value becomes a server the plugin may reach, and only the person types one.
+  assert.deepEqual(contract.settings.ui.setSettings.types, ["text", "select"]);
+  for (const bad of [{ server: "http://192.168.1.1" }, { server: "https://media.example.com" }, { chatId: "1", server: "http://192.168.1.1" }]) {
+    assert.equal(run(bad).out.setSettings, null, JSON.stringify(bad));
+  }
+  for (const bad of [{ botToken: "x" }, { hd: "true" }, { linked: "x" }, { link: "x" }, { ghost: "x" }, { chatId: 42 }, { quality: "4k" },
+    { name: "  " }, { chatId: "x".repeat(501) }, "chatId", ["chatId"]]) {
+    const { out, drops } = run(bad);
+    assert.equal(out.setSettings, null, JSON.stringify(bad));
+    assert.equal(out.message, "Listo");
+    assert.match(drops[0], /setSettings/);
+  }
+  assert.equal(run({ chatId: "1" }, { clearSettings: ["chatId"] }).out.setSettings, null);
+  assert.equal(run({ chatId: "1SECRET" }, {}, (t) => t.replaceAll("SECRET", "•")).out.setSettings, null);
+  const many = JSON.parse(manifest({ apiVersion: 6, settings: Array.from({ length: 9 }, (_, i) => ({ key: `k${i}`, label: `K${i}`, type: "text" })) }));
+  const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, "v"]));
+  assert.equal(checkSettingsOutput("action", { setSettings: nine }, many).setSettings, null);
+  // No setSettings: the answer keeps its old shape.
+  assert.deepEqual(checkSettingsOutput("action", { message: "x", setSettings: null }, m), { message: "x", refresh: false, clearSettings: [] });
+});
+
+// --- link (additive action.link, Kino 0.9.74), as PluginSettingsUi.parseActionResult ---
+
+test("an action's link is kept only with a usable candidate and ANOTHER declared action to confirm it", () => {
+  const m = JSON.parse(manifest({ apiVersion: 6, settings: [
+    { key: "nickname", label: "Apodo", type: "text" },
+    { key: "findMe", label: "Buscar", type: "action" },
+    { key: "linkMe", label: "Vincular", type: "action" },
+    { key: "wipe", label: "Borrar todo", type: "action", confirm: "¿Borrar todo lo guardado?" },
+  ] }));
+  const link = (candidate, confirm = "linkMe") => ({ message: "Te encontré", link: { candidate, confirm } });
+  const ok = checkSettingsOutput("action", link("  @ana  "), m, (t) => t, () => {}, "findMe");
+  assert.deepEqual(ok, { message: "Te encontré", refresh: false, clearSettings: [], link: { candidate: "@ana", confirm: "linkMe" } });
+  assert.equal(contract.settings.ui.link.candidateMaxChars, 64);
+  assert.equal(contract.additiveFromApp["action.link"], contract.additiveFromApp["kino.sync.remoteChanged"]);
+  const max = contract.settings.ui.link.candidateMaxChars;
+  assert.equal(checkSettingsOutput("action", link("a".repeat(max)), m, undefined, undefined, "findMe").link.candidate.length, max);
+  for (const [c, k] of [["", "linkMe"], ["   ", "linkMe"], [7, "linkMe"], ["a".repeat(max + 1), "linkMe"], ["@ana\nx", "linkMe"], ["@ana\u202Eetouq", "linkMe"], ["@a\u200Bna", "linkMe"],
+    ["@ana\u00A0b", "linkMe"], ["@ana\u3000b", "linkMe"], ["\u3164", "linkMe"], ["@a\u2800", "linkMe"], ["\uFFA0", "linkMe"],
+    ["@ana", "findMe"], ["@ana", "nickname"], ["@ana", "ghost"], ["@ana", 3], ["@ana", "wipe"]]) {
+    const drops = [];
+    const out = checkSettingsOutput("action", link(c, k), m, (t) => t, (d) => drops.push(d), "findMe");
+    assert.equal(out.link, null, JSON.stringify([c, k]));
+    assert.equal(out.message, "Te encontré");
+    assert.match(drops[0], /link/);
+  }
+  const notObj = [];
+  assert.equal(checkSettingsOutput("action", { link: "@ana" }, m, undefined, (d) => notObj.push(d), "findMe").link, null);
+  assert.match(notObj[0], /link that is not an object/);
+  // Runs of spaces collapse to one, and the cap counts what is shown.
+  assert.equal(checkSettingsOutput("action", link("  Ana   María  "), m, undefined, undefined, "findMe").link.candidate, "Ana María");
+  assert.equal(checkSettingsOutput("action", link("a" + " ".repeat(100) + "b"), m, undefined, undefined, "findMe").link.candidate, "a b");
+  // Scrubbed like any text the plugin returns.
+  assert.equal(checkSettingsOutput("action", link("@anaSECRET"), m, (t) => t.replaceAll("SECRET", ""), undefined, "findMe").link.candidate, "@ana");
+  // No link in the answer: the answer keeps its old shape.
+  assert.deepEqual(checkSettingsOutput("action", { message: "x" }, m, undefined, undefined, "findMe"), { message: "x", refresh: false, clearSettings: [] });
+  assert.deepEqual(checkSettingsOutput("action", { message: "x", link: null }, m, undefined, undefined, "findMe"), { message: "x", refresh: false, clearSettings: [] });
+});
+
 test("run.mjs prints an action's kept clearSettings and which entries Kino dropped", () => {
   const dir = mkdtempSync(join(tmpdir(), "kino-clear-"));
   try {
@@ -3714,12 +3824,13 @@ test("the guide's kino.fetch limits row names every fetch limit the app enforces
   assert.ok(row.includes(`at most ${contract.fetch.maxRequestsPerCall} requests per call, every hop counted, refused ones included (${contract.fetch.nuvioMaxRequestsPerCall} for a plugin converted from a Nuvio scraper)`), row);
   assert.ok(row.includes(`at most ${contract.fetch.maxInFlight} fetches in flight at once`), row);
   assert.ok(row.includes(`at most ${contract.fetch.maxHostQuestionsPerCall} host questions per call`), row);
+  for (const f of contract.fetch.syncCall.functions) assert.ok(row.includes(`\`${f}\``), `kino.fetch row lacks the sync call ${f}`);
 });
 
 // apiVersion 5 is Kino 0.9.45's (the author's signature, nothing else): a v5 manifest using an apiVersion 6
 // field is refused, or reads it exactly as those apps do (an unknown field, ignored).
 test("apiVersion 5 manifests read as Kino 0.9.45 and 0.9.46 read them: every apiVersion 6 field is refused or ignored", () => {
-  assert.equal(contract.maxApiVersion, 11);
+  assert.equal(contract.maxApiVersion, 12);
   const v5 = (extra) => validateManifest(manifest({ apiVersion: 5, ...extra }));
   const ignored = v5({ debug: true, section: { label: "Mía" }, theme: { accent: "#3D5AFE" } });
   assert.equal(ignored.ok, true);
@@ -3741,7 +3852,7 @@ test("apiVersion 5 manifests read as Kino 0.9.45 and 0.9.46 read them: every api
 // apiVersion 5 shipped in Kino 0.9.45 (signature.fromApp); 6 first ships in 0.9.50 (nothing ships until the built-in source removal is done).
 test("each apiVersion above 4 names the Kino it first ships in, and validate's note reads it", async () => {
   assert.equal(contract.manifest.signature.fromApp, "0.9.45");
-  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50", "7": "0.9.51", "8": "0.9.54", "9": "0.9.55", "10": "0.9.65", "11": "0.9.66" });
+  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50", "7": "0.9.51", "8": "0.9.54", "9": "0.9.55", "10": "0.9.65", "11": "0.9.66", "12": "0.9.74" });
   const dir = mkdtempSync(join(tmpdir(), "kino-from-app-"));
   try {
     writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
@@ -4001,8 +4112,8 @@ test("browser pages: its own wider line, true keeps the old one, and page answer
   assert.equal(v({ browser: true }).manifest.browserPages, false);
   assert.equal(v({ browser: "pages" }, 5).manifest.browser, false);
   assert.deepEqual(v({ browser: "page" }), { ok: false, field: "browser", message: contract.manifest.browser.notBooleanMessage });
-  assert.equal(contract.maxApiVersion, 11);
-  assert.equal(v({}, 12).ok, false);
+  assert.equal(contract.maxApiVersion, 12);
+  assert.equal(v({}, 13).ok, false);
   const dir = mkdtempSync(join(tmpdir(), "kino-browser-page-"));
   try {
     writeFileSync(join(dir, "plugin.js"), "export async function search(q){ try { await kino.browser.page('https://example.com/?s=' + q, { waitFor: 'article' }) } catch (e) { return [{ id: e.code, title: e.code, ref: e.code, kind: 'movie' }] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
@@ -4542,7 +4653,7 @@ test("catalogOnly: resolve may be left out, one of home/browse/search/meta is ne
   assert.deepEqual(validateManifest(manifest({ capabilities: ["home"] })), { ok: false, field: "capabilities", message: 'The plugin must declare "resolve"' });
   assert.equal(contract.additiveFromApp.catalogOnly, "0.9.54");
   // No apiVersion of its own: catalogOnly is valid at every apiVersion.
-  assert.equal(contract.apiVersion, 11);
+  assert.equal(contract.apiVersion, 12);
 });
 
 test("catalogOnly: validate prints the consent line and what an older Kino does with it", async () => {
@@ -4790,4 +4901,87 @@ test("sandbox: validate() warns about a missing global without refusing the plug
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("syncCall: a syncProvider's syncPull/syncPush may move its declared blob through kino.fetch; other calls keep 1 MB", async () => {
+  const m = { id: "s", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: ["syncProvider"], sync: { maxBlobBytes: 2_000_000 } };
+  const out = [];
+  const ok = async (url, init) => { out.push(init.method); return new Response(new Uint8Array(init.method === "PUT" ? 0 : 3_000_000), { status: 200, headers: { "content-type": "application/octet-stream" } }); };
+  const blob = Buffer.alloc(1_500_000, 1).toString("base64");
+  const put = (kino, b) => kino.fetch("https://x.example/blob", { method: "PUT", body: { base64: b } }).then(() => "sent", (e) => e.code);
+  const sync = createKino(m, { fetchImpl: ok, syncCall: true }).kino;
+  assert.equal(await put(sync, blob), "sent");
+  assert.equal(out.length, 1);
+  assert.equal(await put(sync, Buffer.alloc(2_100_000, 1).toString("base64")), "too_large");
+  const other = createKino(m, { fetchImpl: ok }).kino;
+  assert.equal(await put(other, blob), "too_large");
+  // Both refusals happened before any request went out.
+  assert.deepEqual(out, ["PUT"]);
+  // A 3 MB response: within 5 MB for an ordinary call, over a 2,000,000-byte provider's sync cap.
+  assert.equal(await sync.fetch("https://x.example/blob").then(() => "read", (e) => e.code), "too_large");
+  assert.equal(await other.fetch("https://x.example/blob").then(() => "read", (e) => e.code), "read");
+});
+
+test("the guide's kino.tmdb row keeps the per-route cache Kino applies (it was lost once by a regeneration)", () => {
+  const row = TABLES.limits().split("\n").find((r) => r.startsWith("| `kino.tmdb`"));
+  const h = (ms) => ms / 3600000;
+  const t = contract.kinoTmdb.cacheTtlByRouteMs;
+  assert.ok(row.includes(`cached and shared by all plugins, per route (${h(t.tv)} hours for a series by id and its seasons and episodes; ${h(t.stable) / 24} days for a movie, person or collection by id`), row);
+  assert.ok(row.includes(`${h(t.search)} hours for \`/search\`; ${h(t.lists)} hours for \`/trending\``), row);
+  assert.ok(row.includes(`${contract.kinoTmdb.cacheTtlMs / 60000} minutes for anything else, an empty answer or a 404`), row);
+  assert.ok(row.includes("when TMDB fails (not when it refuses the key) the last copy is served"), row);
+  assert.ok(!row.includes("cached 10 minutes ("), row);
+});
+
+test("checkSyncAnswer: a syncPull answer may exceed 2,000,000 characters up to its cap, and not beyond", () => {
+  const big = { id: "s", capabilities: ["syncProvider"], sync: { maxBlobBytes: 4194304 } };
+  const small = { id: "s", capabilities: ["syncProvider"], sync: { maxBlobBytes: 100000 } };
+  assert.equal(syncCallCap(small), 133334 + 65536);
+  assert.equal(syncCallCap({ capabilities: ["search", "resolve"] }), null);
+  const b64 = (n) => Buffer.alloc(n, 7).toString("base64");
+  assert.equal(checkSyncAnswer("syncPull", { blob: b64(3_000_000), version: "1" }, big).version, "1");
+  assert.throws(() => checkSyncAnswer("syncPull", { blob: b64(150_000), version: "1" }, small), /answer too large/);
+  assert.throws(() => checkSyncAnswer("syncPull", { blob: b64(110_000), version: "1" }, small), /over the 100000 cap/);
+  assert.throws(() => checkSyncAnswer("syncStatus", { ready: true, message: "x".repeat(2_000_001) }, big), /answer too large/);
+  assert.equal(checkSyncAnswer("syncPull", null, big), null);
+  assert.throws(() => checkSyncAnswer("syncPull", { blob: "not base64!", version: "1" }, big), /syncPull must answer/);
+  assert.deepEqual(checkSyncAnswer("syncPush", { version: "2" }, big), { version: "2" });
+});
+
+test("the guide's answer-size row names the sync-call exception", () => {
+  const row = TABLES.limits().split("\n").find((r) => r.startsWith("| What a function returns |"));
+  assert.ok(row.includes(String(contract.output.maxResultChars.toLocaleString("en-US"))), row);
+  for (const f of contract.fetch.syncCall.functions) assert.ok(row.includes(`\`${f}\``), row);
+});
+
+test("the sync field is judged as ManifestParser.parseSync judges it: capability, numbers, keySecret, provision", () => {
+  const S = contract.manifest.sync;
+  const base = (sync, settings = [{ key: "token", label: "Token", type: "password" }, { key: "chat", label: "Chat", type: "text" }, { key: "st", label: "Estado", type: "status" }], caps = ["syncProvider"]) =>
+    validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: caps, settings, ...(sync === undefined ? {} : { sync }) }));
+  assert.equal(base(undefined).ok, true);
+  assert.equal(base({ mode: "realtime", pullEveryMs: 1, pushDebounceMs: 2, maxBlobBytes: S.maxBlobBytes, keySecret: "token", provision: ["token", "chat"] }).ok, true);
+  assert.equal(base({ keySecret: "token", provision: ["token"] }, [{ key: "token", label: "T", type: "password", default: null }]).ok, true);
+  assert.equal(base({}, [], ["search", "resolve"]).message, S.needsCapabilityMessage);
+  for (const bad of [null, [], "x", { mode: "push" }, { mode: null }, { pullEveryMs: 0 }, { pushDebounceMs: 1.5 }, { maxBlobBytes: S.maxBlobBytes + 1 }, { maxBlobBytes: "10" }]) {
+    assert.equal(base(bad).message, S.badMessage, JSON.stringify(bad));
+  }
+  assert.equal(base({ keySecret: "chat", provision: ["chat"] }).message, S.keySecret.badMessage);
+  assert.equal(base({ keySecret: "nope" }).message, S.keySecret.badMessage);
+  assert.equal(base({ keySecret: "token", provision: ["token"] }, [{ key: "token", label: "T", type: "password", default: "abc" }]).message, S.keySecret.noDefaultMessage);
+  for (const bad of ["token", ["token", "token"], ["st"], ["missing"], [1], Array.from({ length: S.provision.maxNames + 1 }, (_, i) => "k" + i)]) {
+    assert.equal(base({ provision: bad }).message, S.provision.badMessage, JSON.stringify(bad));
+  }
+  assert.equal(base({ keySecret: "token", provision: ["chat"] }).message, S.provision.needsKeySecretMessage);
+  assert.equal(base({ keySecret: "token" }).message, S.provision.needsKeySecretMessage);
+  // Below apiVersion 12 the field is unknown to the app and ignored.
+  assert.equal(validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 11, entry: "plugin.js", hosts: ["x.example"], capabilities: ["search", "resolve"], sync: "junk" })).ok, true);
+});
+
+test("the consent sheet names a sync provider as the app does: red when the plugin can read the data", () => {
+  const S = contract.manifest.sync;
+  const m = (extra) => validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: ["syncProvider"], settings: [{ key: "token", label: "T", type: "password" }], ...extra })).manifest;
+  const sync = (mm) => consentLines(mm).filter((l) => l.text === S.consentLine || l.text === S.consentLineReadable);
+  assert.deepEqual(sync(m({ sync: { keySecret: "token", provision: ["token"] } })), [{ text: S.consentLineReadable, danger: true }]);
+  assert.deepEqual(sync(m({})), [{ text: S.consentLine, danger: false }]);
+  assert.deepEqual(sync(m({ fetchHosts: "any" })), [{ text: S.consentLine, danger: true }]);
 });
