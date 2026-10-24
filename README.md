@@ -58,8 +58,9 @@ what each answers for a title. The guide, with a complete example: <https://kino
 
 From `apiVersion` 12 (Kino 0.9.74) a plugin can be the transport of the person's sync between devices: the
 `syncProvider` capability with the `syncPull`, `syncPush` and optional `syncStatus` exports, and the manifest's `sync`
-block (`mode`, `pullEveryMs`, `pushDebounceMs`, `maxBlobBytes` up to 4 MiB, `keySecret`, `provision`). `validate.mjs`
-checks that block with the app's rules and prints the consent line (in red with `keySecret`); the settings form's
+block (`mode`, `pullEveryMs`, `pushDebounceMs`, `maxBlobBytes` up to 4 MiB, the required `keySecret`, `provision`).
+`validate.mjs` checks that block with the app's rules and prints the consent line (always red: the plugin and its
+service can read the synced data); the settings form's
 `link` and `help` types and an action's `setSettings` and `link` answers are checked too. `run.mjs` does not call the
 sync exports: test them with your own tests. The guide: <https://kinotvapp.github.io/kino-plugins/en/sync-providers/>.
 

@@ -4958,7 +4958,11 @@ test("the sync field is judged as ManifestParser.parseSync judges it: capability
   const S = contract.manifest.sync;
   const base = (sync, settings = [{ key: "token", label: "Token", type: "password" }, { key: "chat", label: "Chat", type: "text" }, { key: "st", label: "Estado", type: "status" }], caps = ["syncProvider"]) =>
     validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: caps, settings, ...(sync === undefined ? {} : { sync }) }));
-  assert.equal(base(undefined).ok, true);
+  // Every provider derives its key from one of its own password settings: no sync block, or one without keySecret, is refused.
+  assert.equal(S.keySecret.required, true);
+  assert.equal(base(undefined).message, S.keySecret.missingMessage);
+  assert.equal(base({ mode: "poll", provision: ["token"] }).message, S.keySecret.missingMessage);
+  assert.equal(base({}).message, S.keySecret.missingMessage);
   assert.equal(base({ mode: "realtime", pullEveryMs: 1, pushDebounceMs: 2, maxBlobBytes: S.maxBlobBytes, keySecret: "token", provision: ["token", "chat"] }).ok, true);
   assert.equal(base({ keySecret: "token", provision: ["token"] }, [{ key: "token", label: "T", type: "password", default: null }]).ok, true);
   assert.equal(base({}, [], ["search", "resolve"]).message, S.needsCapabilityMessage);
@@ -4969,7 +4973,7 @@ test("the sync field is judged as ManifestParser.parseSync judges it: capability
   assert.equal(base({ keySecret: "nope" }).message, S.keySecret.badMessage);
   assert.equal(base({ keySecret: "token", provision: ["token"] }, [{ key: "token", label: "T", type: "password", default: "abc" }]).message, S.keySecret.noDefaultMessage);
   for (const bad of ["token", ["token", "token"], ["st"], ["missing"], [1], Array.from({ length: S.provision.maxNames + 1 }, (_, i) => "k" + i)]) {
-    assert.equal(base({ provision: bad }).message, S.provision.badMessage, JSON.stringify(bad));
+    assert.equal(base({ keySecret: "token", provision: bad }).message, S.provision.badMessage, JSON.stringify(bad));
   }
   assert.equal(base({ keySecret: "token", provision: ["chat"] }).message, S.provision.needsKeySecretMessage);
   assert.equal(base({ keySecret: "token" }).message, S.provision.needsKeySecretMessage);
@@ -4977,11 +4981,13 @@ test("the sync field is judged as ManifestParser.parseSync judges it: capability
   assert.equal(validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 11, entry: "plugin.js", hosts: ["x.example"], capabilities: ["search", "resolve"], sync: "junk" })).ok, true);
 });
 
-test("the consent sheet names a sync provider as the app does: red when the plugin can read the data", () => {
+test("the consent sheet names a sync provider as the app does: always red, the plugin can read the data", () => {
   const S = contract.manifest.sync;
-  const m = (extra) => validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: ["syncProvider"], settings: [{ key: "token", label: "T", type: "password" }], ...extra })).manifest;
-  const sync = (mm) => consentLines(mm).filter((l) => l.text === S.consentLine || l.text === S.consentLineReadable);
-  assert.deepEqual(sync(m({ sync: { keySecret: "token", provision: ["token"] } })), [{ text: S.consentLineReadable, danger: true }]);
-  assert.deepEqual(sync(m({})), [{ text: S.consentLine, danger: false }]);
+  assert.equal(S.consentLine, "Sincronizará tus datos a través de su servicio: el plugin y su servicio podrán leerlos");
+  assert.equal(S.consentLineReadable, undefined, "one line: every provider can read the data");
+  const keyed = { sync: { keySecret: "token", provision: ["token"] } };
+  const m = (extra) => validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 12, entry: "plugin.js", hosts: ["x.example"], capabilities: ["syncProvider"], settings: [{ key: "token", label: "T", type: "password" }], ...keyed, ...extra })).manifest;
+  const sync = (mm) => consentLines(mm).filter((l) => l.text === S.consentLine);
+  assert.deepEqual(sync(m({})), [{ text: S.consentLine, danger: true }]);
   assert.deepEqual(sync(m({ fetchHosts: "any" })), [{ text: S.consentLine, danger: true }]);
 });

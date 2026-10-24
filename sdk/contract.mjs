@@ -347,7 +347,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
       return bad("nuvioRepos", 'The "nuvioRepos" field must list 1 to 4 GitHub repositories (owner/repo) or https addresses of a Nuvio manifest, and goes with the "nuvio" capability, which needs it');
     }
   }
-  // apiVersion 12, `sync` (ManifestParser.parseSync): only with syncProvider; the numbers, keySecret and provision rules.
+  // apiVersion 12, `sync` (ManifestParser.parseSync): only with syncProvider, which requires it; the numbers, keySecret and provision rules.
   if (o.apiVersion >= m.sync.apiVersion) {
     const syncError = syncFieldError(o, caps, o.settings || []);
     if (syncError) return bad("sync", syncError);
@@ -382,23 +382,23 @@ function isWellFormedSeal(seal, maxValueBytes, prefix) {
 
 /**
  * What the app's ManifestParser refuses in the `sync` field (apiVersion 12), as its message, or null when it is fine (or
- * absent). [settings] are the manifest's own, already validated.
+ * absent without the syncProvider capability). [settings] are the manifest's own, already validated.
  */
 function syncFieldError(o, caps, settings) {
   const s = contract.manifest.sync;
   if (!caps.includes(s.requires)) return o.sync !== undefined ? s.needsCapabilityMessage : null;
-  if (o.sync === undefined) return null;
+  // Every provider derives its key from one of its own settings: a key one device made up could never reach another.
+  if (o.sync === undefined) return s.keySecret.missingMessage;
   const v = o.sync;
   if (v === null || typeof v !== "object" || Array.isArray(v)) return s.badMessage;
   if (v.mode !== undefined && !s.modes.includes(v.mode)) return s.badMessage;
   const whole = (k) => v[k] === undefined || (Number.isInteger(v[k]) && v[k] > 0);
   if (!whole("pullEveryMs") || !whole("pushDebounceMs") || !whole("maxBlobBytes")) return s.badMessage;
   if (v.maxBlobBytes !== undefined && v.maxBlobBytes > s.maxBlobBytes) return s.badMessage;
-  if (v.keySecret !== undefined) {
-    const named = typeof v.keySecret === "string" && v.keySecret ? settings.find((x) => x.key === v.keySecret && x.type === s.keySecret.settingType) : null;
-    if (!named) return s.keySecret.badMessage;
-    if (named.default !== undefined && named.default !== null) return s.keySecret.noDefaultMessage;
-  }
+  if (v.keySecret === undefined) return s.keySecret.missingMessage;
+  const named = typeof v.keySecret === "string" && v.keySecret ? settings.find((x) => x.key === v.keySecret && x.type === s.keySecret.settingType) : null;
+  if (!named) return s.keySecret.badMessage;
+  if (named.default !== undefined && named.default !== null) return s.keySecret.noDefaultMessage;
   let provision = [];
   if (v.provision !== undefined) {
     if (!Array.isArray(v.provision) || v.provision.length > s.provision.maxNames || !v.provision.every((n) => typeof n === "string")) return s.provision.badMessage;
@@ -406,7 +406,7 @@ function syncFieldError(o, caps, settings) {
     if (new Set(v.provision).size !== v.provision.length || !v.provision.every(valued)) return s.provision.badMessage;
     provision = v.provision;
   }
-  if (v.keySecret !== undefined && !provision.includes(v.keySecret)) return s.provision.needsKeySecretMessage;
+  if (!provision.includes(v.keySecret)) return s.provision.needsKeySecretMessage;
   return null;
 }
 

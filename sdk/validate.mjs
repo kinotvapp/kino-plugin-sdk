@@ -59,12 +59,9 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes(contract.kinoNuvio.capability)) line(contract.kinoNuvio.consentLine.es);
   // apiVersion 7 "tracking": in red, the plugin's declared hosts named (PluginConsent / Tracking.consentLine).
   if (m.capabilities.includes(contract.tracking.capability)) line(trackingConsentLine(m.hosts || []), true);
-  // apiVersion 12 "syncProvider" (PluginConsent.extraLines): with sync.keySecret the plugin and its service can read the data,
-  // always red; without it the blob is unreadable to them, red only when it may be stored on any public server.
-  if (m.capabilities.includes(contract.manifest.sync.requires)) {
-    if (m.sync && typeof m.sync.keySecret === "string") line(contract.manifest.sync.consentLineReadable, true);
-    else line(contract.manifest.sync.consentLine, fetchAnyHost(m));
-  }
+  // apiVersion 12 "syncProvider" (PluginConsent.extraLines): the key comes from sync.keySecret, which the plugin reads, so the
+  // plugin and its service can read the data: always red.
+  if (m.capabilities.includes(contract.manifest.sync.requires)) line(contract.manifest.sync.consentLine, true);
   // apiVersion 7 "segments": a plain line, not red (it only learns which title plays): PluginConsent / Segments.CONSENT_LINE.
   if (m.capabilities.includes(contract.segments.capability)) line(contract.segments.consentLine);
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
