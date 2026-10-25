@@ -30,10 +30,6 @@ const manifest = (extra = {}) => JSON.stringify({
   hosts: ["example.com"], capabilities: ["search", "resolve"], ...extra,
 });
 
-// These tests read files of the Kino repo itself (docs/plugins/, plugins/archive-org, its .gitignore). A template does
-// not carry them, so they are skipped here and run in the Kino repo.
-const NEEDS_KINO_REPO = "needs files of the Kino repo that this template does not have";
-
 test("contract.json is the one the app pins", () => {
   assert.equal(contract.apiVersion, 12);
   // apiVersion 5 stays what Kino 0.9.45 made it: the author-signed entry, nothing else.
@@ -158,6 +154,10 @@ test("validate() reports the palette guardrails as notes", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// These tests read files of the Kino repo itself (docs/plugins/, plugins/archive-org, its .gitignore). A template does
+// not carry them, so they are skipped here and run in the Kino repo.
+const NEEDS_KINO_REPO = "needs files of the Kino repo that this template does not have";
 
 test("the archive-org plugin passes the kit's checks", { skip: NEEDS_KINO_REPO }, async () => {
   const r = await validate(archive);
@@ -4806,6 +4806,9 @@ test("externalResolver: the package, an apk from a GitHub release, F-Droid and a
   const gh = "https://github.com/acme/resolver/releases/download/v1.0/r.apk";
   assert.equal(ok({ package: "com.example.resolver" }).ok, true);
   assert.equal(ok({ package: "com.example.resolver", fdroid: true }).ok, true);
+  const ia = (url) => ok({ package: "com.example.resolver", apk: { url, sha256: "ab".repeat(32) } }).ok;
+  assert.equal(ia("https://archive.org/download/some-item/r-1.0.apk"), true);
+  for (const url of ["https://archive.org/details/some-item", "https://archive.org/download/some-item", "https://ia800107.us.archive.org/5/items/some-item/r.apk", "https://archive.org/download/some-item/r.apk?x=1"]) assert.equal(ia(url), false, url);
   assert.equal(ok({ package: "com.example.resolver", downloader: { code: "7702264" } }).ok, true);
   assert.equal(ok({ package: "com.example.resolver", apk: { url: gh, sha256: "ab".repeat(32), label: "R" }, fdroid: true, downloader: { code: "123" } }).ok, true);
   for (const bad of [
@@ -4817,6 +4820,23 @@ test("externalResolver: the package, an apk from a GitHub release, F-Droid and a
     { package: "com.example.resolver", apk: { url: "https://example.com/r.apk", sha256: "a".repeat(64) } }, // not GitHub
     { package: "com.example.resolver", apk: { url: "https://github.com/acme/resolver/raw/main/r.apk", sha256: "a".repeat(64) } },
     { package: "com.example.resolver", apk: { url: gh } },
+  ]) {
+    const r = ok(bad);
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.equal(r.field, "externalResolver");
+  }
+  // The same app for a computer, by system, next to the apk.
+  const zip = "https://github.com/acme/resolver/releases/download/v1.0/r-windows.zip";
+  assert.equal(ok({ package: "com.example.resolver", apk: { url: gh, sha256: "ab".repeat(32) }, desktop: { windows: { url: zip, sha256: "cd".repeat(32) }, linux: { url: zip, sha256: "ef".repeat(32) } } }).ok, true);
+  assert.equal(ok({ package: "com.example.resolver", desktop: {} }).ok, true);
+  for (const bad of [
+    { package: "com.example.resolver", desktop: "windows" }, { package: "com.example.resolver", desktop: [] },
+    { package: "com.example.resolver", desktop: { freebsd: { url: zip, sha256: "a".repeat(64) } } }, // an unknown system
+    { package: "com.example.resolver", desktop: { windows: "x" } },
+    { package: "com.example.resolver", desktop: { windows: { url: zip } } },
+    { package: "com.example.resolver", desktop: { windows: { url: zip, sha256: "xyz" } } },
+    { package: "com.example.resolver", desktop: { windows: { url: "https://example.com/r.zip", sha256: "a".repeat(64) } } }, // not GitHub
+    { package: "com.example.resolver", desktop: { windows: { url: "http://github.com/acme/resolver/releases/download/v1.0/r.zip", sha256: "a".repeat(64) } } },
   ]) {
     const r = ok(bad);
     assert.equal(r.ok, false, JSON.stringify(bad));
@@ -4990,4 +5010,25 @@ test("the consent sheet names a sync provider as the app does: always red, the p
   const sync = (mm) => consentLines(mm).filter((l) => l.text === S.consentLine);
   assert.deepEqual(sync(m({})), [{ text: S.consentLine, danger: true }]);
   assert.deepEqual(sync(m({ fetchHosts: "any" })), [{ text: S.consentLine, danger: true }]);
+});
+
+test("a settings item's devices is judged as the app judges it (apiVersion 12): phone, tv or both; anything else refuses", () => {
+  const D = contract.settings.devices;
+  assert.deepEqual(D.values, ["phone", "tv"]);
+  const v = (devices, apiVersion = 12) => validateManifest(JSON.stringify({ id: "dv", name: "D", version: "1.0.0", apiVersion, entry: "plugin.js", hosts: ["x.example"], capabilities: ["search", "resolve"],
+    settings: [{ key: "token", label: "Token", type: "password", ...(devices === undefined ? {} : { devices }) }] }));
+  for (const ok of [undefined, ["phone"], ["tv"], ["tv", "phone"]]) assert.equal(v(ok).ok, true, JSON.stringify(ok));
+  for (const bad of [["watch"], [], ["phone", "phone"], "phone", [1], true, {}]) {
+    assert.equal(v(bad).message, D.badMessage.replace("{key}", "token"), JSON.stringify(bad));
+  }
+  assert.equal(v("junk", 11).ok, true, "below apiVersion 12 the key is unknown and ignored");
+});
+
+test("an action's linkOnly is judged as the app judges it (apiVersion 12): only on an action, only a boolean", () => {
+  const L = contract.settings.linkOnly;
+  const v = (setting, apiVersion = 12) => validateManifest(JSON.stringify({ id: "lo", name: "L", version: "1.0.0", apiVersion, entry: "plugin.js", hosts: ["x.example"], capabilities: ["search", "resolve"], settings: [setting] }));
+  assert.equal(v({ key: "go", label: "Go", type: "action", linkOnly: true }).ok, true);
+  assert.equal(v({ key: "go", label: "Go", type: "text", linkOnly: true }).message, L.onlyActionMessage.replace("{key}", "go"));
+  assert.equal(v({ key: "go", label: "Go", type: "action", linkOnly: "yes" }).message, L.notBooleanMessage.replace("{key}", "go"));
+  assert.equal(v({ key: "go", label: "Go", type: "text", linkOnly: "x" }, 11).ok, true, "below apiVersion 12 it is ignored");
 });

@@ -591,6 +591,16 @@ function validateSettings(list, apiVersion = contract.maxApiVersion) {
           : typeof o.default === "string" && o.default.length <= type.maxChars;
       if (!fits) return `The default value of the setting "${key}" doesn't fit its type`;
     }
+    // apiVersion 12 `devices` (PluginSettings.devicesOf): a non-empty list of different known devices; ignored below it.
+    if (apiVersion >= s.devices.apiVersion && o.devices !== undefined) {
+      const d = o.devices;
+      if (!Array.isArray(d) || d.length === 0 || new Set(d).size !== d.length || !d.every((x) => s.devices.values.includes(x))) return s.devices.badMessage.replace("{key}", key);
+    }
+    // apiVersion 12 `linkOnly` (PluginSettings): only on an action, only a boolean; ignored below it.
+    if (apiVersion >= s.linkOnly.apiVersion && o.linkOnly !== undefined) {
+      if (o.type !== "action") return s.linkOnly.onlyActionMessage.replace("{key}", key);
+      if (typeof o.linkOnly !== "boolean") return s.linkOnly.notBooleanMessage.replace("{key}", key);
+    }
   }
   if (list.filter((o) => o.type === "link").length > s.configAids.maxLinks) return `The plugin has more than ${s.configAids.maxLinks} settings of type link`;
   if (list.filter((o) => o.type === "help").length > s.configAids.maxHelps) return `The plugin has more than ${s.configAids.maxHelps} settings of type help`;

@@ -63,10 +63,17 @@ block (`mode`, `pullEveryMs`, `pushDebounceMs`, `maxBlobBytes` up to 4 MiB, the 
 service can read the synced data); the settings form's
 `link` and `help` types and an action's `setSettings` and `link` answers are checked too. `run.mjs` does not call the
 sync exports: test them with your own tests. The guide: <https://kinotvapp.github.io/kino-plugins/en/sync-providers/>.
+Settings items may carry `devices` (`["phone"]` / `["tv"]`: where Kino draws them) and an action `linkOnly`
+(never drawn, run only as a link's `confirm`), both apiVersion 12: `validate.mjs` checks them like the app; the kit
+renders no form, so it does not filter by device. A complete, signed provider to copy:
+<https://github.com/kinotvapp/kino-plugin-sync-gram>.
 
 Desde `apiVersion` 12 (Kino 0.9.74) un plugin puede ser el transporte de la sincronización entre los aparatos de la
 persona (capacidad `syncProvider`). `validate.mjs` revisa el bloque `sync` con las reglas de la app y muestra la línea de
 consentimiento; `run.mjs` no llama a las funciones de sincronización: pruébalas con tus propias pruebas.
+Los ajustes pueden llevar `devices` (`["phone"]` / `["tv"]`: dónde los dibuja Kino) y una acción `linkOnly` (nunca
+se dibuja, solo corre como `confirm` de un `link`), los dos desde apiVersion 12: `validate.mjs` los revisa como la app.
+Un proveedor completo y firmado para copiar: <https://github.com/kinotvapp/kino-plugin-sync-gram>.
 
 ## Tests
 
