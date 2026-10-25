@@ -111,6 +111,15 @@ export function externalResolverOk(r) {
   return true;
 }
 
+/**
+ * ManifestParser.isStandaloneSet: at least one standalone capability and nothing else but standaloneSupplements (socket,
+ * storageLarge, catalog, qrScan). Such a plugin plays nothing and needs neither `required` nor `atLeastOneOf`.
+ */
+export function isStandaloneSet(caps) {
+  const { standalone, standaloneSupplements = [] } = contract.capabilities;
+  return caps.some((c) => standalone.includes(c)) && caps.every((c) => standalone.includes(c) || standaloneSupplements.includes(c));
+}
+
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
   const bad = (field, message) => ({ ok: false, field, message });
@@ -184,9 +193,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (playback !== undefined) return bad("catalogOnly", co.forbidsMessage.replace("{name}", playback));
     if (!co.atLeastOneOf.some((c) => caps.includes(c))) return bad("catalogOnly", co.atLeastOneOfMessage);
   } else {
-    // Capabilities that play nothing, declared without any other (a subtitle provider, a tracker, or both): neither
-    // `required` nor `atLeastOneOf` applies.
-    const standalone = caps.length > 0 && caps.every((c) => contract.capabilities.standalone.includes(c));
+    // Capabilities that play nothing, declared without any other (a subtitle provider, a tracker, or both), maybe with the
+    // runtime room they use (apiVersion 13 standaloneSupplements): neither `required` nor `atLeastOneOf` applies.
+    const standalone = isStandaloneSet(caps);
     const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
     if (!standalone && missingRequiredCap !== undefined) return bad("capabilities", `The plugin must declare "${missingRequiredCap}"`);
     if (!standalone && !contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
@@ -399,6 +408,8 @@ function syncFieldError(o, caps, settings) {
   const named = typeof v.keySecret === "string" && v.keySecret ? settings.find((x) => x.key === v.keySecret && x.type === s.keySecret.settingType) : null;
   if (!named) return s.keySecret.badMessage;
   if (named.default !== undefined && named.default !== null) return s.keySecret.noDefaultMessage;
+  // Every device derives the key from it: a device-only password ("sync": false, read from apiVersion 13) can't be the key.
+  if (named.sync === false && o.apiVersion >= contract.settings.sync.apiVersion) return s.keySecret.deviceOnlyMessage;
   let provision = [];
   if (v.provision !== undefined) {
     if (!Array.isArray(v.provision) || v.provision.length > s.provision.maxNames || !v.provision.every((n) => typeof n === "string")) return s.provision.badMessage;
@@ -406,8 +417,14 @@ function syncFieldError(o, caps, settings) {
     if (new Set(v.provision).size !== v.provision.length || !v.provision.every(valued)) return s.provision.badMessage;
     provision = v.provision;
   }
-  if (provision.some((n) => settings.some((x) => x.key === n && x.sync === false))) return s.provision.deviceOnlyMessage;
+  // A device-only password may be named (apiVersion 13): a one-shot secret the pairing hands over while it holds a value;
+  // a device-only text never.
+  if (o.apiVersion >= contract.settings.sync.apiVersion && provision.some((n) => settings.some((x) => x.key === n && x.type === "text" && x.sync === false))) {
+    return s.provision.deviceOnlyTextMessage;
+  }
   if (!provision.includes(v.keySecret)) return s.provision.needsKeySecretMessage;
+  // apiVersion 13 generateKey: Kino makes the keySecret value itself; below 13 the key is unknown, so ignored.
+  if (v.generateKey !== undefined && o.apiVersion >= s.generateKey.apiVersion && typeof v.generateKey !== "boolean") return s.generateKey.badMessage;
   return null;
 }
 
@@ -608,10 +625,10 @@ function validateSettings(list, apiVersion = contract.maxApiVersion) {
       if (o.type !== "action") return s.linkOnly.onlyActionMessage.replace("{key}", key);
       if (typeof o.linkOnly !== "boolean") return s.linkOnly.notBooleanMessage.replace("{key}", key);
     }
-    // apiVersion 13 `sync` (PluginSettings): a password may stay on this device with "sync": false; only on a password,
-    // only a boolean; ignored below it.
+    // apiVersion 13 `sync` (PluginSettings): a password or a text may stay on this device with "sync": false; only on
+    // those types, only a boolean; ignored below it.
     if (apiVersion >= s.sync.apiVersion && o.sync !== undefined && o.sync !== null) {
-      if (o.type !== "password") return s.sync.onlyPasswordMessage.replace("{key}", key);
+      if (!s.sync.types.includes(o.type)) return s.sync.onlyPasswordOrTextMessage.replace("{key}", key);
       if (typeof o.sync !== "boolean") return s.sync.notBooleanMessage.replace("{key}", key);
     }
   }
@@ -2142,21 +2159,28 @@ function linkOf(raw, settings, actionKey, scrub, drop) {
   return { candidate: shown, confirm: raw.confirm };
 }
 
+/** PluginSettingsUi.settableTypes: the setting types an action's setSettings may fill at [apiVersion] (a password from passwordApiVersion). */
+export function settableTypes(apiVersion) {
+  const rule = contract.settings.ui.setSettings;
+  return rule.types.filter((t) => t !== "url" && (t !== "password" || apiVersion >= rule.passwordApiVersion));
+}
+
 /**
  * An action answer's `setSettings` (additive action.setSettings), as PluginSettingsUi.setValues: the kept values, or null when
- * Kino refuses the whole field (one drop line). Only the plugin's own text/select settings (never a url); a value the scrub would change
- * holds a secret and is refused.
+ * Kino refuses the whole field (one drop line). Only the plugin's own text/select settings and, from apiVersion 13, its
+ * passwords (never a url); a value the scrub would change holds a secret and is refused.
  */
-function setSettingsOf(raw, settings, cleared, scrub, drop) {
+function setSettingsOf(raw, settings, cleared, scrub, drop, apiVersion) {
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const rule = contract.settings.ui.setSettings;
   if (!isObj(raw)) { drop("action answered setSettings that is not an object; nothing was set"); return null; }
   const keys = Object.keys(raw);
   if (keys.length > rule.maxEntries) { drop(`action answered more than ${rule.maxEntries} setSettings; nothing was set`); return null; }
   const out = {};
+  const types = settableTypes(apiVersion);
   for (const k of keys) {
-    // rule.types is text and select: never a url (its value would become a server the plugin may reach).
-    const s = settings.find((x) => x.key === k && rule.types.includes(x.type) && x.type !== "url");
+    // Never a url (its value would become a server the plugin may reach); a password only from passwordApiVersion.
+    const s = settings.find((x) => x.key === k && types.includes(x.type));
     const v = typeof raw[k] === "string" ? raw[k].trim() : null;
     const type = s && contract.settings.types[s.type];
     const fits = s && v !== null && !cleared.includes(k) && !(s.required === true && !v) &&
@@ -2167,6 +2191,48 @@ function setSettingsOf(raw, settings, cleared, scrub, drop) {
     out[k] = v;
   }
   return out;
+}
+
+/**
+ * The password values an action answer's setSettings names (kept or not), longest first: PluginSettingsUi.passwordsIn.
+ * They are secrets from then on, so the action's message and link are scrubbed of them.
+ */
+function setPasswordsIn(raw, settings, apiVersion) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw) || !settableTypes(apiVersion).includes("password")) return [];
+  return Object.keys(raw).filter((k) => settings.some((x) => x.key === k && x.type === "password"))
+    .map((k) => (typeof raw[k] === "string" ? raw[k].trim() : "")).filter((v) => v).sort((a, b) => b.length - a.length);
+}
+
+/** [scrub], then each of [values] removed until none is left; a text still holding one after 8 rounds is dropped. */
+function withoutValues(scrub, values) {
+  if (!values.length) return scrub;
+  return (t) => {
+    let out = scrub(t);
+    for (let i = 0; i < 8 && values.some((v) => out.includes(v)); i++) for (const v of values) out = out.split(v).join("");
+    return values.some((v) => out.includes(v)) ? "" : out;
+  };
+}
+
+/**
+ * An action's checked answer with the password values of its setSettings masked, for printing: the kit never shows a
+ * value Kino would store as a password (Kino never logs one).
+ */
+export function maskSetPasswords(out, manifest) {
+  if (!out || typeof out !== "object" || !out.setSettings) return out;
+  const pw = new Set((manifest.settings || []).filter((s) => s.type === "password").map((s) => s.key));
+  return { ...out, setSettings: Object.fromEntries(Object.entries(out.setSettings).map(([k, v]) => [k, pw.has(k) ? "••••••••" : v])) };
+}
+
+/**
+ * PluginSettingsUi.parseStatusAnswer's `hide` (apiVersion 13): the keys of [manifest]'s own settings, among the answer's first
+ * contract.settings.ui.statusHide.maxEntries entries, that the form does not draw while this answer is current. [] below 13,
+ * for a non-array, and for unknown keys or non-strings (dropped).
+ */
+export function statusHide(value, manifest) {
+  const rule = contract.settings.ui.statusHide;
+  if ((manifest.apiVersion || 1) < rule.apiVersion || value === null || typeof value !== "object" || !Array.isArray(value.hide)) return [];
+  const known = new Set((manifest.settings || []).map((s) => s.key));
+  return [...new Set(value.hide.slice(0, rule.maxEntries).filter((k) => typeof k === "string" && known.has(k)))];
 }
 
 export function checkSettingsOutput(fn, value, manifest, scrub = (t) => t, drop = () => {}, actionKey = null) {
@@ -2195,14 +2261,22 @@ export function checkSettingsOutput(fn, value, manifest, scrub = (t) => t, drop 
     return out;
   }
   if (fn === "action") {
+    const api = manifest.apiVersion || 1;
+    // A password the answer fills (or tried to) is a secret from now on: never echoed in the message or a link.
+    const shown = withoutValues(scrub, isObj(value) ? setPasswordsIn(value.setSettings, settings, api) : []);
+    const shownText = (v, max) => {
+      if (typeof v !== "string" || !v.trim()) return null;
+      const t = shown(v.trim()).trim();
+      return t ? clip(t, max) : null;
+    };
     const out = {
-      message: isObj(value) ? text(value.message, ui.messageMaxChars) : null,
+      message: isObj(value) ? shownText(value.message, ui.messageMaxChars) : null,
       refresh: isObj(value) && value.refresh === true,
       clearSettings: isObj(value) ? clearSettingsOf(value.clearSettings, settings, ui.clearSettings.maxEntries, drop) : [],
     };
     // Only when the answer carried one, so an answer without it keeps its shape: null means Kino refuses it (generic error).
-    if (isObj(value) && value.link !== undefined && value.link !== null) out.link = linkOf(value.link, settings, actionKey, scrub, drop);
-    if (isObj(value) && value.setSettings !== undefined && value.setSettings !== null) out.setSettings = setSettingsOf(value.setSettings, settings, out.clearSettings, scrub, drop);
+    if (isObj(value) && value.link !== undefined && value.link !== null) out.link = linkOf(value.link, settings, actionKey, shown, drop);
+    if (isObj(value) && value.setSettings !== undefined && value.setSettings !== null) out.setSettings = setSettingsOf(value.setSettings, settings, out.clearSettings, scrub, drop, api);
     return out;
   }
   if (value === null || value === undefined) return { accepted: true };

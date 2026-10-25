@@ -18,7 +18,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, contract, englishCoverage, fetchAnyHost, kb, requiredExports, validateManifest } from "./contract.mjs";
+import { checkOutput, checkSettingsOutput, contract, englishCoverage, fetchAnyHost, isStandaloneSet, kb, maskSetPasswords, statusHide, requiredExports, validateManifest } from "./contract.mjs";
 import { resolvePalette } from "./palette.mjs";
 import { decodeCipherKey } from "./seal.mjs";
 import { createKino, signingLane } from "./kino-shim.mjs";
@@ -73,7 +73,7 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   // "browser": "pages" also reads pages (kino.browser.page): PluginConsent.BROWSER_PAGE_LINE (manifest.browser.pageConsentLine).
   if (m.browser) line(m.browserPages ? contract.manifest.browser.pageConsentLine : contract.manifest.browser.consentLine, true);
   if (m.streamHostsAny) {
-    const onlySubtitles = m.capabilities.includes("subtitles") && m.capabilities.every((c) => contract.capabilities.standalone.includes(c));
+    const onlySubtitles = m.capabilities.includes("subtitles") && isStandaloneSet(m.capabilities);
     line(onlySubtitles ? "Puede traer subtítulos desde cualquier servidor que indique"
       : m.capabilities.includes("subtitles") ? "Puede reproducir video y traer subtítulos desde cualquier servidor que indique"
       : "Puede reproducir video desde cualquier servidor que indique", true);
@@ -128,11 +128,14 @@ export async function runUiFunction(plugin, run, args, m, servers) {
       Object.entries(value).forEach(([k, t]) => notes.push(`settingsStatus: ${k} shows "${t}"`));
       const missing = settings.filter((x) => (x.type === "status" || x.type === "qr") && !(x.key in value)).map((x) => x.key);
       if (missing.length) notes.push(`settingsStatus: no line for ${missing.join(", ")} (Kino shows nothing there)`);
+      const hidden = statusHide(answer, m);
+      if (hidden.length) notes.push(`settingsStatus: hides ${hidden.join(", ")} while this answer is current`);
     }
     if (run === "action") notes.push(`action(${JSON.stringify(args[0])}): ${value.message ? `Kino shows "${value.message}"` : "no message"}${value.refresh ? ", then reads settingsStatus again" : ""}${value.clearSettings.length ? `, clears ${value.clearSettings.join(", ")}` : ""}${value.link ? `, then asks "Is this you, ${value.link.candidate}?" and runs ${JSON.stringify(value.link.confirm)} only if the person confirms` : ""}${value.link === null ? ", and shows its generic error for the link it cannot use" : ""}${value.setSettings ? `, then saves ${Object.keys(value.setSettings).join(", ")} as if typed` : ""}${value.setSettings === null ? ", and shows its generic error for the setSettings it cannot apply" : ""}`);
     if (run === "validateSettings" && value.accepted) notes.push("validateSettings accepts the save");
     if (run === "validateSettings" && !value.accepted) notes.push(`validateSettings refuses the save: ${JSON.stringify(value)}`);
-    return out(value);
+    // A password the action fills is shown masked: Kino never shows nor logs it.
+    return out(run === "action" ? maskSetPasswords(value, m) : value);
   } catch (e) {
     problems.push(`${run}: ${e && e.code ? `[${e.code}] ` : ""}${e && e.message ? e.message : String(e)}`);
     return out(null);

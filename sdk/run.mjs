@@ -77,7 +77,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, contract, markSearchHits, readRangeProblem, segmentSkip, validateManifest } from "./contract.mjs";
+import { checkOutput, checkSettingsOutput, contract, markSearchHits, maskSetPasswords, readRangeProblem, segmentSkip, validateManifest } from "./contract.mjs";
 import { contrast, formatRatio, resolvePalette } from "./palette.mjs";
 import { askImage, askRead, createKino, errorReport, signingLane } from "./kino-shim.mjs";
 import { loadPlugin, missingGlobalLines, scanMissingGlobals } from "./sandbox.mjs";
@@ -328,7 +328,8 @@ async function main() {
     saveTape();
     if (SETTINGS_FUNCTIONS.includes(fn) && !opts.raw) {
       // What the app keeps of the answer (status lines, the action's line, the save's verdict).
-      process.stdout.write(JSON.stringify(checkSettingsOutput(fn, out, manifest, undefined, (d) => stderr(`[dropped by Kino] ${d}`), fn === "action" ? rest[0] : null), null, 2) + "\n");
+      // A password the action fills is printed masked: Kino never shows nor logs it.
+      process.stdout.write(JSON.stringify(maskSetPasswords(checkSettingsOutput(fn, out, manifest, undefined, (d) => stderr(`[dropped by Kino] ${d}`), fn === "action" ? rest[0] : null), manifest), null, 2) + "\n");
       return 0;
     }
     // A scoped search's null: "I can't search inside this page", and Kino filters the page's titles itself.

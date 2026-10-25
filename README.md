@@ -65,15 +65,21 @@ service can read the synced data); the settings form's
 sync exports: test them with your own tests. The guide: <https://kinotvapp.github.io/kino-plugins/en/sync-providers/>.
 Settings items may carry `devices` (`["phone"]` / `["tv"]`: where Kino draws them) and an action `linkOnly`
 (never drawn, run only as a link's `confirm`), both apiVersion 12: `validate.mjs` checks them like the app; the kit
-renders no form, so it does not filter by device. A complete, signed provider to copy:
-<https://github.com/kinotvapp/kino-plugin-sync-gram>.
+renders no form, so it does not filter by device. Three complete, signed providers to copy:
+<https://github.com/kinotvapp/kino-plugin-sync-gram> (Sync-Gram, a Telegram bot of the person's own),
+<https://github.com/kinotvapp/kino-plugin-sync-server> (Sync Servidor, a server of the person's own) and
+<https://github.com/kinotvapp/kino-plugin-sync-gram-account> (Sync-Gram Cuenta, the person's own Telegram account,
+apiVersion 13; not in any catalog: installed by pasting its repository address).
 
 Desde `apiVersion` 12 (Kino 0.9.74) un plugin puede ser el transporte de la sincronización entre los aparatos de la
 persona (capacidad `syncProvider`). `validate.mjs` revisa el bloque `sync` con las reglas de la app y muestra la línea de
 consentimiento; `run.mjs` no llama a las funciones de sincronización: pruébalas con tus propias pruebas.
 Los ajustes pueden llevar `devices` (`["phone"]` / `["tv"]`: dónde los dibuja Kino) y una acción `linkOnly` (nunca
 se dibuja, solo corre como `confirm` de un `link`), los dos desde apiVersion 12: `validate.mjs` los revisa como la app.
-Un proveedor completo y firmado para copiar: <https://github.com/kinotvapp/kino-plugin-sync-gram>.
+Tres proveedores completos y firmados para copiar: <https://github.com/kinotvapp/kino-plugin-sync-gram> (Sync-Gram,
+un bot de Telegram de la persona), <https://github.com/kinotvapp/kino-plugin-sync-server> (Sync Servidor, un servidor
+de la persona) y <https://github.com/kinotvapp/kino-plugin-sync-gram-account> (Sync-Gram Cuenta, la propia cuenta de
+Telegram de la persona, apiVersion 13; no está en ningún catálogo: se instala pegando la dirección de su repositorio).
 
 ## apiVersion 13 (Kino 0.9.74, not published yet) / apiVersion 13 (Kino 0.9.74, todavía sin publicar)
 
@@ -99,9 +105,17 @@ The kit already checks and runs all of it with the app's rules:
   each one, `typeof kino.crypto.convert === "function"`, and keep a fallback. The kit offers what its own contract has.
 - `node sdk/init.mjs my-plugin --host example.com --with byteSource,images,catalog,socket` (any of them) scaffolds an
   apiVersion 13 plugin that declares those capabilities with a working, commented example of each.
-- A `password` setting may say `"sync": false` (apiVersion 13): its value stays on the device where it was typed (never
-  sent to a paired device, in no backup, kit or `sync.provision`). `validate.mjs` refuses it on any other type, as a
-  non-boolean, or named in `sync.provision`; below apiVersion 13 the key is ignored.
+- A `password` or `text` setting may say `"sync": false` (apiVersion 13): its value stays on the device where it was
+  typed (never sent to a paired device, in no backup or kit). `sync.provision` may name a device-only password, as a
+  one-shot secret sent once to a new device, but never as the `keySecret`; it may never name a device-only text.
+  `validate.mjs` refuses `"sync"` on any other type or as a non-boolean; below apiVersion 13 the key is ignored.
+- `syncProvider` (or another standalone capability) may sit next to `socket`, `storageLarge`, `catalog` and `qrScan`
+  and still need no `resolve`, `search` or `home`.
+- An action's `setSettings` may fill one of the plugin's own `password` settings; `run.mjs` prints it masked.
+- `sync.generateKey: true`: Kino makes the `keySecret` value itself (32 random bytes as 64 hex characters) while it is
+  empty; `validate.mjs` refuses anything but a boolean.
+- A `settingsStatus` answer may carry `hide: [setting keys]` (at most 32, unknown keys dropped): the form does not draw
+  them while that answer is current. A `qr` setting with no text draws nothing.
 
 The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
 <https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
@@ -110,8 +124,11 @@ The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotv
 todo Kino anterior a 0.9.74 rechaza las dos. El kit
 ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), `byteSource` (`run.mjs . resolve` acepta el
 stream `{ source: "plugin" }`, `run.mjs --size <bytes> . read <handle> <offset> <length>` y `askRead` llaman tu `read`),
-`storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `"sync": false` en un ajuste `password` (se
-queda en el aparato donde se escribió), `run.mjs --out <archivo> .
+`storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `"sync": false` en un ajuste `password` o
+`text` (se queda en el aparato donde se escribió; `sync.provision` puede nombrar una contraseña así como secreto de un solo uso,
+nunca como `keySecret`), `sync.generateKey` (Kino crea la clave), `setSettings` que llena una contraseña, `hide` en la
+respuesta de `settingsStatus`, `syncProvider` junto a `socket`, `storageLarge`, `catalog` o `qrScan` sin `resolve` ni
+`search`, `run.mjs --out <archivo> .
 image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `kino.crypto` (dependen de la versión de
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
@@ -124,9 +141,7 @@ node --test sdk/test/*.test.mjs
 
 Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason.
 Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
-catalog's shared test vectors: they run in the app's repository. One test, the engine-probes language battery, fails on
-Node 24.14: a probe listed as a known difference (`nested array depth 5000 JSON`) now agrees there. It compares Node
-with Kino's engine, not your plugin; it fails the same way in the app's repository.
+catalog's shared test vectors: they run in the app's repository.
 
 ## Licence / Licencia
 

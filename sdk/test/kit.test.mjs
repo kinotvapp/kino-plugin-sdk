@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, mediaOf, contract, englishCoverage, imageVerdict, localizedSettings, sectionLabel, markSearchHits, metaAnswer, optInt, requiredExports, segmentSkip, segmentsAnswer, validateManifest, checkSyncAnswer, syncCallCap } from "../contract.mjs";
+import { checkOutput, checkSettingsOutput, maskSetPasswords, settableTypes, mediaOf, contract, englishCoverage, imageVerdict, localizedSettings, sectionLabel, markSearchHits, metaAnswer, optInt, requiredExports, segmentSkip, segmentsAnswer, validateManifest, checkSyncAnswer, syncCallCap } from "../contract.mjs";
 import { catalogAnswer, catalogNorm, catalogTokens, createKino, errorReport, kitCall, newCatalogState, shownSentence, signingLane } from "../kino-shim.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { contrast, deltaE, formatRatio, luminance, resolvePalette } from "../palette.mjs";
@@ -3814,7 +3814,8 @@ test("an action's setSettings keeps the plugin's own plain settings and refuses 
     { message: "Listo", refresh: false, clearSettings: [], setSettings: { chatId: "42", quality: "sd" } });
   assert.equal(contract.settings.ui.setSettings.maxEntries, 8);
   // Never a url setting: its value becomes a server the plugin may reach, and only the person types one.
-  assert.deepEqual(contract.settings.ui.setSettings.types, ["text", "select"]);
+  assert.deepEqual(contract.settings.ui.setSettings.types, ["text", "select", "password"]);
+  assert.equal(contract.settings.ui.setSettings.passwordApiVersion, 13);
   for (const bad of [{ server: "http://192.168.1.1" }, { server: "https://media.example.com" }, { chatId: "1", server: "http://192.168.1.1" }]) {
     assert.equal(run(bad).out.setSettings, null, JSON.stringify(bad));
   }
@@ -3832,6 +3833,39 @@ test("an action's setSettings keeps the plugin's own plain settings and refuses 
   assert.equal(checkSettingsOutput("action", { setSettings: nine }, many).setSettings, null);
   // No setSettings: the answer keeps its old shape.
   assert.deepEqual(checkSettingsOutput("action", { message: "x", setSettings: null }, m), { message: "x", refresh: false, clearSettings: [] });
+});
+
+test("from apiVersion 13 an action's setSettings may fill a password: kept, scrubbed from the message and link, printed masked", () => {
+  const settings = [
+    { key: "syncKey", label: "Clave", type: "password" },
+    { key: "pin", label: "PIN", type: "password", required: true },
+    { key: "chatId", label: "Chat", type: "text" },
+    { key: "create", label: "Crear clave", type: "action" },
+    { key: "confirm", label: "Confirmar", type: "action" },
+  ];
+  const at = (apiVersion) => JSON.parse(manifest({ apiVersion, settings }));
+  const key = "0123456789abcdef".repeat(4);
+  const run = (answer, apiVersion = 13, scrub = (t) => t) => { const drops = []; return { out: checkSettingsOutput("action", answer, at(apiVersion), scrub, (d) => drops.push(d), "create"), drops }; };
+  const ok = run({ message: `Clave creada: ${key}`, setSettings: { syncKey: ` ${key} `, chatId: "42" } }).out;
+  assert.deepEqual(ok, { message: "Clave creada:", refresh: false, clearSettings: [], setSettings: { syncKey: key, chatId: "42" } });
+  // Below apiVersion 13 a password is refused as before.
+  assert.equal(run({ setSettings: { syncKey: key } }, 12).out.setSettings, null);
+  // The typed rules: too long, not a string, a required one emptied, a value holding a secret, set and cleared together.
+  for (const bad of [{ syncKey: "x".repeat(501) }, { syncKey: 42 }, { pin: "  " }, { syncKey: `${key}SECRET` }]) {
+    assert.equal(run({ message: "Listo", setSettings: bad }, 13, (t) => t.replaceAll("SECRET", "•")).out.setSettings, null, JSON.stringify(bad));
+  }
+  assert.equal(run({ setSettings: { syncKey: key }, clearSettings: ["syncKey"] }).out.setSettings, null);
+  // Never echoed: a message that is only the key shows nothing, a link candidate that is the key is refused.
+  assert.equal(run({ message: key, setSettings: { syncKey: key } }).out.message, null);
+  assert.equal(run({ setSettings: { syncKey: key }, link: { candidate: key, confirm: "confirm" } }).out.link, null);
+  // Refused as a whole: the message is still scrubbed of what it tried to set.
+  assert.equal(run({ message: `Clave ${key}`, setSettings: { syncKey: key, ghost: "x" } }).out.message, "Clave");
+  // The kit prints it masked, never the value.
+  const printed = JSON.stringify(maskSetPasswords(ok, at(13)));
+  assert.ok(!printed.includes(key), printed);
+  assert.ok(printed.includes('"chatId":"42"'));
+  assert.deepEqual(settableTypes(12), ["text", "select"]);
+  assert.deepEqual(settableTypes(13), ["text", "select", "password"]);
 });
 
 // --- link (additive action.link, Kino 0.9.74), as PluginSettingsUi.parseActionResult ---
@@ -5611,6 +5645,23 @@ test("the consent sheet names a sync provider as the app does: always red, the p
   const sync = (mm) => consentLines(mm).filter((l) => l.text === S.consentLine);
   assert.deepEqual(sync(m({})), [{ text: S.consentLine, danger: true }]);
   assert.deepEqual(sync(m({ fetchHosts: "any" })), [{ text: S.consentLine, danger: true }]);
+});
+
+test("a standalone set may carry socket, storageLarge, catalog and qrScan (apiVersion 13), as ManifestParser.isStandaloneSet", () => {
+  assert.deepEqual(contract.capabilities.standaloneSupplements, ["socket", "storageLarge", "catalog", "qrScan"]);
+  for (const c of contract.capabilities.standaloneSupplements) assert.ok(contract.capabilities.declarative.includes(c), c);
+  const v = (capabilities, extra = {}) => validateManifest(JSON.stringify({ id: "sp", name: "S", version: "1.0.0", apiVersion: 13, entry: "plugin.js", hosts: ["x.example"], capabilities, ...extra }));
+  const provider = { settings: [{ key: "token", label: "T", type: "password" }], sync: { keySecret: "token", provision: ["token"] } };
+  for (const extra of [["socket"], ["storageLarge"], ["catalog"], ["qrScan"], ["socket", "storageLarge", "catalog", "qrScan"]]) {
+    const r = v(["syncProvider", ...extra], provider);
+    assert.equal(r.ok, true, `${extra}: ${r.message}`);
+  }
+  for (const real of ["subtitles", "tracking", "segments"]) assert.equal(v([real, "socket"]).ok, true, real);
+  for (const alone of [["socket"], ["storageLarge"], ["catalog", "qrScan"]]) {
+    assert.equal(v(alone).message, 'The plugin must declare "resolve"', JSON.stringify(alone));
+  }
+  assert.equal(v(["syncProvider", "socket", "byteSource"], provider).message, 'The plugin must declare "resolve"');
+  assert.equal(v(["syncProvider", "socket", "download"], provider).ok, false);
 });
 
 test("a settings item's devices is judged as the app judges it (apiVersion 12): phone, tv or both; anything else refuses", () => {
