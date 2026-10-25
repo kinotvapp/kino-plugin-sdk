@@ -75,6 +75,35 @@ Los ajustes pueden llevar `devices` (`["phone"]` / `["tv"]`: dónde los dibuja K
 se dibuja, solo corre como `confirm` de un `link`), los dos desde apiVersion 12: `validate.mjs` los revisa como la app.
 Un proveedor completo y firmado para copiar: <https://github.com/kinotvapp/kino-plugin-sync-gram>.
 
+## apiVersion 13 (in development) / apiVersion 13 (en desarrollo)
+
+`apiVersion` 13 is **in development for the next Kino version and no released Kino accepts it yet** (today's Kino,
+0.9.74, refuses it; `contract.json` names 0.9.75 provisionally, so `validate.mjs` says "needs Kino 0.9.75 or later").
+The kit already checks and runs all of it with the app's rules:
+
+- `socket`: `kino.ws` over Node's global `WebSocket`, `wss://` to a declared host on port 443 only, 4 sockets, the frame
+  cap, frames as `Uint8Array` or `hex`/`base64` strings. Swap `globalThis.WebSocket` for a fake to test offline.
+- `byteSource`: `validate.mjs` requires the `read` export. `run.mjs` has no `read` command and its `resolve` check does
+  not accept a `{ source: "plugin", handle, size, mime }` stream yet ("the video has an invalid address"): test `resolve`
+  and `read` from your own Node test. A complete plugin with its test:
+  <https://kinotvapp.github.io/kino-plugins/en/bytes/#example>
+- `storageLarge`: `kino.storage` with 16 MB in total, 2 MB per value, 1,000 keys.
+- `catalog`: `kino.catalog` (upsert, search, get, remove, clear, count) in memory, with the app's answers and errors.
+- `qrScan` and the settings `qr` type (`refreshMs` 2000 to 60000): `createKino(manifest, { qrScan })` takes a fake
+  scanner; without it, or with `--device tv`, `kino.qr.scan` answers `unavailable`.
+- `imageSource`: `validate.mjs` requires the `image` export; `askImage(plugin, manifest, ref)` in `sdk/kino-shim.mjs`
+  asks it the way Kino does.
+- `kino.crypto.aesIge`, `aesIgeVerify`, `modPow`, `gunzip` and `convert` (they come with that Kino at any `apiVersion`).
+
+The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
+<https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
+
+`apiVersion` 13 está en desarrollo para la próxima versión de Kino y **ningún Kino publicado lo acepta todavía**. El kit
+ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), el export `read` de `byteSource` (pruébalo con tu
+propia prueba de Node: `run.mjs` todavía no revisa un stream `{ source: "plugin" }` ni llama `read`), `storageLarge`,
+`kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `askImage` para `imageSource`, y las
+operaciones de bytes de `kino.crypto`. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
+
 ## Tests
 
 ```
@@ -82,6 +111,10 @@ node --test sdk/test/*.test.mjs
 ```
 
 Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason.
+Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
+catalog's shared test vectors: they run in the app's repository. One test, the engine-probes language battery, fails on
+Node 24.14: a probe listed as a known difference (`nested array depth 5000 JSON`) now agrees there. It compares Node
+with Kino's engine, not your plugin; it fails the same way in the app's repository.
 
 ## Licence / Licencia
 
