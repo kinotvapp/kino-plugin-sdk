@@ -406,6 +406,7 @@ function syncFieldError(o, caps, settings) {
     if (new Set(v.provision).size !== v.provision.length || !v.provision.every(valued)) return s.provision.badMessage;
     provision = v.provision;
   }
+  if (provision.some((n) => settings.some((x) => x.key === n && x.sync === false))) return s.provision.deviceOnlyMessage;
   if (!provision.includes(v.keySecret)) return s.provision.needsKeySecretMessage;
   return null;
 }
@@ -606,6 +607,12 @@ function validateSettings(list, apiVersion = contract.maxApiVersion) {
     if (apiVersion >= s.linkOnly.apiVersion && o.linkOnly !== undefined) {
       if (o.type !== "action") return s.linkOnly.onlyActionMessage.replace("{key}", key);
       if (typeof o.linkOnly !== "boolean") return s.linkOnly.notBooleanMessage.replace("{key}", key);
+    }
+    // apiVersion 13 `sync` (PluginSettings): a password may stay on this device with "sync": false; only on a password,
+    // only a boolean; ignored below it.
+    if (apiVersion >= s.sync.apiVersion && o.sync !== undefined && o.sync !== null) {
+      if (o.type !== "password") return s.sync.onlyPasswordMessage.replace("{key}", key);
+      if (typeof o.sync !== "boolean") return s.sync.notBooleanMessage.replace("{key}", key);
     }
   }
   if (list.filter((o) => o.type === "link").length > s.configAids.maxLinks) return `The plugin has more than ${s.configAids.maxLinks} settings of type link`;

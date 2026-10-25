@@ -99,6 +99,9 @@ The kit already checks and runs all of it with the app's rules:
   each one, `typeof kino.crypto.convert === "function"`, and keep a fallback. The kit offers what its own contract has.
 - `node sdk/init.mjs my-plugin --host example.com --with byteSource,images,catalog,socket` (any of them) scaffolds an
   apiVersion 13 plugin that declares those capabilities with a working, commented example of each.
+- A `password` setting may say `"sync": false` (apiVersion 13): its value stays on the device where it was typed (never
+  sent to a paired device, in no backup, kit or `sync.provision`). `validate.mjs` refuses it on any other type, as a
+  non-boolean, or named in `sync.provision`; below apiVersion 13 the key is ignored.
 
 The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
 <https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
@@ -106,7 +109,8 @@ The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotv
 `apiVersion` 13 está en desarrollo para la próxima versión de Kino y **ningún Kino publicado lo acepta todavía**. El kit
 ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), `byteSource` (`run.mjs . resolve` acepta el
 stream `{ source: "plugin" }`, `run.mjs --size <bytes> . read <handle> <offset> <length>` y `askRead` llaman tu `read`),
-`storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `run.mjs --out <archivo> .
+`storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `"sync": false` en un ajuste `password` (se
+queda en el aparato donde se escribió), `run.mjs --out <archivo> .
 image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `kino.crypto` (dependen de la versión de
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
