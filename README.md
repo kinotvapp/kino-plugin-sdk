@@ -83,26 +83,33 @@ The kit already checks and runs all of it with the app's rules:
 
 - `socket`: `kino.ws` over Node's global `WebSocket`, `wss://` to a declared host on port 443 only, 4 sockets, the frame
   cap, frames as `Uint8Array` or `hex`/`base64` strings. Swap `globalThis.WebSocket` for a fake to test offline.
-- `byteSource`: `validate.mjs` requires the `read` export. `run.mjs` has no `read` command and its `resolve` check does
-  not accept a `{ source: "plugin", handle, size, mime }` stream yet ("the video has an invalid address"): test `resolve`
-  and `read` from your own Node test. A complete plugin with its test:
-  <https://kinotvapp.github.io/kino-plugins/en/bytes/#example>
+- `byteSource`: `validate.mjs` requires the `read` export; `run.mjs . resolve` accepts a
+  `{ source: "plugin", handle, size, mime }` stream with the app's rules; `node sdk/run.mjs --size <total bytes> . read
+  <handle> <offset> <length>` calls your `read` as Kino's proxy does and prints the byte count, the sha256 and the first
+  bytes; `askRead(plugin, manifest, stream, offset, length)` in `sdk/kino-shim.mjs` does the same from a test. A complete
+  plugin with its test: <https://kinotvapp.github.io/kino-plugins/en/bytes/#example>
 - `storageLarge`: `kino.storage` with 16 MB in total, 2 MB per value, 1,000 keys.
 - `catalog`: `kino.catalog` (upsert, search, get, remove, clear, count) in memory, with the app's answers and errors.
 - `qrScan` and the settings `qr` type (`refreshMs` 2000 to 60000): `createKino(manifest, { qrScan })` takes a fake
   scanner; without it, or with `--device tv`, `kino.qr.scan` answers `unavailable`.
-- `imageSource`: `validate.mjs` requires the `image` export; `askImage(plugin, manifest, ref)` in `sdk/kino-shim.mjs`
-  asks it the way Kino does.
-- `kino.crypto.aesIge`, `aesIgeVerify`, `modPow`, `gunzip` and `convert` (they come with that Kino at any `apiVersion`).
+- `imageSource`: `validate.mjs` requires the `image` export; `node sdk/run.mjs --out poster.jpg . image <handle>` writes
+  what your `image` answers, and `askImage(plugin, manifest, ref)` in `sdk/kino-shim.mjs` asks it the way Kino does.
+- `kino.crypto.aesIge`, `aesIgeVerify`, `modPow`, `gunzip` and `convert`. They are gated on the Kino you run on, not on
+  your manifest's `apiVersion` (`convert` and `aesIgeVerify` arrived after the first apiVersion 13 builds): feature-detect
+  each one, `typeof kino.crypto.convert === "function"`, and keep a fallback. The kit offers what its own contract has.
+- `node sdk/init.mjs my-plugin --host example.com --with byteSource,images,catalog,socket` (any of them) scaffolds an
+  apiVersion 13 plugin that declares those capabilities with a working, commented example of each.
 
 The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
 <https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
 
 `apiVersion` 13 está en desarrollo para la próxima versión de Kino y **ningún Kino publicado lo acepta todavía**. El kit
-ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), el export `read` de `byteSource` (pruébalo con tu
-propia prueba de Node: `run.mjs` todavía no revisa un stream `{ source: "plugin" }` ni llama `read`), `storageLarge`,
-`kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `askImage` para `imageSource`, y las
-operaciones de bytes de `kino.crypto`. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
+ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), `byteSource` (`run.mjs . resolve` acepta el
+stream `{ source: "plugin" }`, `run.mjs --size <bytes> . read <handle> <offset> <length>` y `askRead` llaman tu `read`),
+`storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `run.mjs --out <archivo> .
+image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `kino.crypto` (dependen de la versión de
+Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
+byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
 
 ## Tests
 
