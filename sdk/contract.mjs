@@ -62,11 +62,11 @@ export function schemeAllowed(u, manifest) {
   return (manifest.insecureHosts || []).includes(h);
 }
 
-/** What the entry must export: the capabilities' functions, settingsStatus/action for a status/action setting, and `section` for a declared section (apiVersion 6). */
+/** What the entry must export: the capabilities' functions, settingsStatus/action for a status (or qr, apiVersion 13)/action setting, and `section` for a declared section (apiVersion 6). */
 export function requiredExports(caps, settings = [], manifest = {}) {
   const ui = contract.settings.ui.exports;
   const fromSettings = [
-    ...(settings.some((s) => s && s.type === "status") ? [ui.status] : []),
+    ...(settings.some((s) => s && (s.type === "status" || s.type === "qr")) ? [ui.status] : []),
     ...(settings.some((s) => s && s.type === "action") ? [ui.action] : []),
   ];
   return [...new Set([...caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])), ...fromSettings, ...(manifest.section ? [contract.manifest.section.export] : []), ...(manifest.panel ? [contract.manifest.panel.exports.panel] : [])])];
@@ -549,6 +549,12 @@ function validateSettings(list, apiVersion = contract.maxApiVersion) {
       if (c === null) return `"confirmEn" of the setting "${key}" must be a string of 1 to ${ui.confirmMaxChars} characters`;
       if (o.confirm === undefined || o.confirm === null) return `"confirmEn" of the setting "${key}" also needs "confirm"`;
     }
+    // apiVersion 13: only a qr setting has "refreshMs" (contract.qr.settingsQr), 2000 to 60000 ms; below 13 an unknown key, ignored.
+    if (o.refreshMs !== undefined && o.refreshMs !== null && apiVersion >= s.types.qr.apiVersion) {
+      const Q = contract.qr.settingsQr;
+      if (o.type !== "qr") return `Only a setting of type qr has "refreshMs" ("${key}")`;
+      if (!(Number.isInteger(o.refreshMs) && o.refreshMs >= Q.minRefreshMs && o.refreshMs <= Q.maxRefreshMs)) return `"refreshMs" of the setting "${key}" goes from ${Q.minRefreshMs} to ${Q.maxRefreshMs}`;
+    }
     if (o.fields !== undefined && o.type !== "list") return `Only a setting of type list has "fields" ("${key}")`;
     if (o.type === "list") {
       const L = s.list;
@@ -634,6 +640,34 @@ export function isUserServer(value) {
   return true;
 }
 
+/**
+ * The app's PluginPanelOutput.qrUrl (the player panel's qr, and a web address in a settings `qr`): https only, at most maxQrUrlChars, on a public host with a dot or a public IPv4 address (never the device or the home
+ * network: a single-label name such as `router` or `nas` is a home network's).
+ */
+export function qrUrl(raw) {
+  const v = typeof raw === "string" ? raw.trim() : null;
+  if (v === null || v.length > contract.output.panel.maxQrUrlChars || !v.startsWith("https://")) return null;
+  // OkHttp keeps the host as written ("010.1.1.1" or "0x7f.1" are names to it, not IPv4 like WHATWG's URL reads them).
+  let parsed;
+  try { parsed = new URL(v); } catch { return null; }
+  if (!parsed.hostname) return null;
+  const written = /^https:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)/.exec(v);
+  // OkHttp percent-decodes the host ("127.0.0.%31", "%6cocalhost"): judge what it would connect to; a bad escape is no URL.
+  let host;
+  try { host = decodeURIComponent(written ? written[1] : parsed.hostname).toLowerCase(); } catch { return null; }
+  if (!host) return null;
+  if (isPublicIpv4Literal(host)) return v;
+  return host.replace(/\.+$/, "").includes(".") && !hostRulesLocal(host) ? v : null;
+}
+
+/** HostRules.isLocalAddress. */
+function hostRulesLocal(host) {
+  const h = host.toLowerCase().replace(/\.+$/, "");
+  if (h === "" || h.includes(":") || h.includes("[")) return true;
+  if (h === "localhost" || contract.hostRules.privateSuffixes.some((s) => h.endsWith(s))) return true;
+  return /^\d+$/.test(h.split(".").pop());
+}
+
 // ---------- output: what the app keeps and drops ----------
 
 const o = () => contract.output;
@@ -681,6 +715,115 @@ function image(v, servers) {
   return imageVerdict(typeof v === "string" ? v : "", servers).url;
 }
 
+/** imageSource (apiVersion 13): whether this manifest's answers may carry image references (the app's EffectiveHosts.imagePlugin). */
+export function allowsImageRefs(manifest) {
+  return Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= contract.images.apiVersion &&
+    Array.isArray(manifest.capabilities) && manifest.capabilities.includes(contract.images.capability);
+}
+
+// ---------- byteSource (apiVersion 13): a stream whose bytes the plugin serves through read() ----------
+
+/** The app's PluginOutput.allowsBytes: the manifest declares byteSource at apiVersion 13 or later. */
+export function allowsByteSource(manifest) {
+  const b = contract.byteSource;
+  return Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= b.apiVersion &&
+    Array.isArray(manifest.capabilities) && manifest.capabilities.includes("byteSource");
+}
+
+/** ContractProblem.ByteStreamInvalid's English: what the app logs for a malformed `{ source: "plugin" }` stream. */
+export const BYTE_STREAM_INVALID = "the plugin stream's handle, size or mime is not valid";
+/** ContractProblem.ReadInvalid's English: a read answer that is not `{ bytes }` of exactly the length asked for. */
+export const READ_INVALID = "read didn't return the bytes asked for";
+
+/**
+ * The app's PluginOutput.byteSourceOf: `{ handle, size, mime }` of a `{ source: "plugin" }` stream, or null. handle: a
+ * string of 1 to maxHandleChars characters with no ISO control character (U+0000..U+001F, U+007F..U+009F); size: a
+ * positive whole number; mime: trimmed, matching contract.byteSource.mimePattern.
+ */
+export function byteSourceOf(v) {
+  const b = contract.byteSource;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  const h = v.handle;
+  if (typeof h !== "string" || h.length < 1 || h.length > b.maxHandleChars || /[\u0000-\u001f\u007f-\u009f]/.test(h)) return null;
+  const size = v.size;
+  if (typeof size !== "number" || !Number.isInteger(size) || size <= 0) return null;
+  const mime = typeof v.mime === "string" ? v.mime.trim() : "";
+  if (!mime || !new RegExp(b.mimePattern).test(mime)) return null;
+  return { handle: h, size, mime };
+}
+
+/**
+ * The app's PluginByteStreams.decodeRead: the bytes of a `read` answer `{ bytes: <base64> }` (standard alphabet, padding
+ * optional, nothing else), which must be exactly min(length, size - offset) long; else an Error with READ_INVALID.
+ */
+export function readAnswer(value, offset, length, size) {
+  const text = value !== null && typeof value === "object" && !Array.isArray(value) ? value.bytes : undefined;
+  if (typeof text !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(text) || text.replace(/=+$/, "").length % 4 === 1) throw new Error(READ_INVALID);
+  const bytes = Buffer.from(text, "base64");
+  if (bytes.length !== Math.min(length, size - offset)) throw new Error(READ_INVALID);
+  return bytes;
+}
+
+/** Why Kino's proxy would never ask this range ([offset], [length] of a stream of [size] bytes), or null. */
+export function readRangeProblem(offset, length, size) {
+  const b = contract.byteSource;
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset % b.alignmentBytes !== 0) return `offset must be a non-negative multiple of ${b.alignmentBytes}`;
+  if (!Number.isSafeInteger(length) || length < 1 || length > b.chunkBytes) return `length must be 1 to ${b.chunkBytes}`;
+  if (Number.isFinite(size) && offset >= size) return `offset ${offset} is past the end of the ${size}-byte stream`;
+  return null;
+}
+
+/** The app's PluginImageRef.validHandle: 1 to maxHandleChars characters, no control character. */
+export function imageHandleOk(h) {
+  return typeof h === "string" && h.length >= 1 && h.length <= contract.images.maxHandleChars && !/[\u0000-\u001f\u007f-\u009f]/.test(h);
+}
+
+/** The app's PluginImageRef.fromOutput: `{ source: "plugin", handle }` with a valid handle as `{ source, handle }`, else null. */
+export function imageRefOf(v) {
+  if (v === null || typeof v !== "object" || Array.isArray(v) || v.source !== contract.images.source || !imageHandleOk(v.handle)) return null;
+  return { source: contract.images.source, handle: v.handle };
+}
+
+/**
+ * The app's PluginOutput.imageOrRef, for the fields that may carry a reference (poster, backdrop, still, a hero's image): a
+ * string is the Images rule's URL; an object is a reference only for a plugin that declares imageSource (ctx.imageRefs).
+ * The kit keeps a reference as `{ source: "plugin", handle }` (the app turns it into an address of its own).
+ */
+function imageOrRef(v, ctx) {
+  if (typeof v === "string") return image(v, ctx.servers);
+  if (ctx.imageRefs) return imageRefOf(v) || "";
+  return "";
+}
+
+const B64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/**
+ * What the app's PluginImages.decodeAnswer keeps of an `image` answer: `{ bytes: Buffer, mime }`, or throws an Error saying
+ * why Kino would show the placeholder (canonical base64 of at most maxBytes decoded bytes, a mime of contract.images.mimes,
+ * and bytes that really are that type).
+ */
+export function imageAnswer(value) {
+  const lim = contract.images;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("image didn't return { bytes, mime }");
+  if (typeof value.mime !== "string" || !lim.mimes.includes(value.mime)) throw new Error(`image: mime must be one of ${lim.mimes.join(", ")}`);
+  const text = value.bytes;
+  if (typeof text !== "string" || !text) throw new Error("image: bytes must be a base64 string");
+  if (text.length > Math.ceil(lim.maxBytes / 3) * 4) throw new Error(`image: over ${lim.maxBytes} bytes once decoded`);
+  const pad = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  const last = pad ? B64_ALPHABET.indexOf(text[text.length - pad - 1]) : 0;
+  if (!B64.test(text) || (pad && (last & (pad === 2 ? 15 : 3)) !== 0)) throw new Error("image: bytes is not canonical base64 (standard alphabet, padded, no whitespace)");
+  const bytes = Buffer.from(text, "base64");
+  if (!bytes.length || bytes.length > lim.maxBytes) throw new Error(`image: over ${lim.maxBytes} bytes once decoded`);
+  const sig = {
+    "image/jpeg": (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    "image/png": (b) => b.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((x, i) => b[i] === x),
+    "image/webp": (b) => b.length >= 12 && b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP",
+  }[value.mime];
+  if (!sig(bytes)) throw new Error(`image: the bytes are not ${value.mime}`);
+  return { bytes, mime: value.mime };
+}
+
 function sameServer(server, u) {
   let s;
   try { s = new URL(server); } catch { return false; }
@@ -699,7 +842,8 @@ function strings(v, max, maxChars) {
   return out;
 }
 
-function items(list, max, { allowSeries, allowLive, allowAudio, allowAdult, servers }, drop) {
+function items(list, max, ctx, drop) {
+  const { allowSeries, allowLive, allowAudio, allowAdult } = ctx;
   const out = [];
   const seen = new Set();
   (Array.isArray(list) ? list : []).forEach((x, i) => {
@@ -726,7 +870,7 @@ function items(list, max, { allowSeries, allowLive, allowAudio, allowAdult, serv
     const ids = x.ids && typeof x.ids === "object" ? x.ids : {};
     out.push({
       id, ref: x.ref, title, kind: x.kind, year: text(x.year, 10),
-      poster: image(x.poster, servers), backdrop: image(x.backdrop, servers),
+      poster: imageOrRef(x.poster, ctx), backdrop: imageOrRef(x.backdrop, ctx),
       overview: text(x.overview, o().maxTextChars), lang: text(x.lang, 20), quality: text(x.quality, 20),
       originalTitle: text(x.originalTitle, o().maxTitleChars),
       genres: strings(x.genres, o().maxGenres, o().maxGenreChars),
@@ -812,7 +956,7 @@ function section(value, ctx, drop) {
   if (value.hero !== null && typeof value.hero === "object" && !Array.isArray(value.hero)) {
     const title = strictText(value.hero.title, o().maxTitleChars);
     if (!title) drop("section: a hero without title dropped");
-    else hero = { title, image: image(value.hero.image, ctx.servers), text: strictText(value.hero.text, lim.maxHeroTextChars) };
+    else hero = { title, image: imageOrRef(value.hero.image, ctx), text: strictText(value.hero.text, lim.maxHeroTextChars) };
   }
   return { tabs, tab, hero, rows: rows(Array.isArray(value.rows) ? value.rows : [], ctx, (m) => drop(`section ${m}`)) };
 }
@@ -841,7 +985,7 @@ function categories(value, ctx, drop) {
   return out;
 }
 
-function episodes(value, drop, servers) {
+function episodes(value, drop, servers, imageRefs = false) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("the episode list is not valid JSON");
   if (!Array.isArray(value.episodes)) throw new Error("the plugin returned zero episodes");
   const seen = new Set();
@@ -858,7 +1002,7 @@ function episodes(value, drop, servers) {
     eps.push({
       season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars),
       // The same image and length rules as an item's poster and runtimeMinutes (PluginOutput.episodes).
-      still: image(e.still, servers), overview: text(e.overview, o().maxTextChars),
+      still: imageOrRef(e.still, { servers, imageRefs }), overview: text(e.overview, o().maxTextChars),
       airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "",
       runtimeMinutes: Number.isInteger(e.runtimeMinutes) && e.runtimeMinutes >= o().minRuntimeMinutes && e.runtimeMinutes <= o().maxRuntimeMinutes ? e.runtimeMinutes : 0,
     });
@@ -1130,8 +1274,13 @@ export function mediaOf(raw) {
   return empty ? null : out;
 }
 
-function stream(value, { manifest, servers, allowDrm, liveChannel = false, inline = false, drop = () => {} }) {
+function stream(value, { manifest, servers, allowDrm, liveChannel = false, inline = false, alternative = false, drop = () => {} }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("the plugin returned zero videos");
+  // byteSource (apiVersion 13, PluginOutput.stream's allowBytes): a movie's, an episode's or a track's own stream only, never a
+  // live channel's, an inline one or a lazy copy's. Anything else has `source` ignored and fails below like a missing url.
+  if (!liveChannel && !inline && !alternative && value.source === contract.byteSource.source && allowsByteSource(manifest)) {
+    return byteStream(value, manifest, servers, drop);
+  }
   // apiVersion 11, `externalResolve`: the answer is a hand-off to a resolver app, not a playable URL (PluginOutput.externalOf).
   // Read only from a plugin that declares both; anything else has its `external` ignored and fails below like a missing url.
   const external = !liveChannel && !inline ? externalOf(value.external, manifest) : null;
@@ -1212,6 +1361,46 @@ function stream(value, { manifest, servers, allowDrm, liveChannel = false, inlin
   if (media) out.media = media; else delete out.media;
   if (portable) out.portable = portable;
   return sig ? { ...out, ...sig } : out;
+}
+
+/**
+ * The app's PluginOutput.byteStreamOf: the byte source (or ByteStreamInvalid), with its subtitles, audio tracks, duration,
+ * skip times, label and media read as a url Stream's; nothing that needs a url of its own (drm, signing, alternatives,
+ * alternate hosts, an external hand-off, a portable copy).
+ */
+function byteStream(value, manifest, servers, drop) {
+  const bytes = byteSourceOf(value);
+  if (!bytes) throw new Error(BYTE_STREAM_INVALID);
+  const check = urlChecker(manifest, servers);
+  const anyPublic = liveStreamUrlAllowed(manifest, servers);
+  const sideOk = (url, what) => {
+    if (manifest.streamHostsAny) return anyPublic(url);
+    try { check(url, what); return true; } catch { return false; }
+  };
+  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => sideOk(s && s.url, "the subtitle"));
+  const audioUrls = new Set();
+  const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
+    if (!sideOk(a && a.url, "the audio")) return false;
+    if (audioUrls.has(a.url)) return false;
+    audioUrls.add(a.url);
+    return true;
+  });
+  const durationMs = Number.isFinite(value.durationMs) && value.durationMs > 0 ? Math.floor(value.durationMs) : 0;
+  const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
+  for (const k of ["drm", "signing", "alternatives", "alternateHosts", "external", "portable", "url"]) {
+    if (value[k] !== undefined) drop(`resolve: ${k} is ignored on a { source: "plugin" } stream`);
+  }
+  const out = { source: contract.byteSource.source, ...bytes, headers: {}, subtitles, audioTracks, expiresInSeconds: expires, drm: null };
+  if (durationMs) out.durationMs = durationMs;
+  const skip = skipOf(value[o().skip.field], durationMs);
+  if (skip) out.skip = skip;
+  if ((manifest.apiVersion || 1) >= o().streamLabels.apiVersion) {
+    const label = labelOf(value, "resolve: label", drop);
+    if (label) out.label = label;
+  }
+  const media = mediaOf(value.media);
+  if (media) out.media = media;
+  return out;
 }
 
 /**
@@ -1911,6 +2100,21 @@ function clearSettingsOf(raw, settings, max, drop) {
  * or an object). `scrub` (the app's secret scrubbing) runs on each kept text before it is clipped.
  */
 /**
+ * The app's PluginSettingsUi.qrText: a settings `qr`'s text (apiVersion 13), or null. A string of 1 to
+ * contract.qr.settingsQr.maxChars characters once trimmed, no control character; an http(s) address only by the panel
+ * qr's rule (qrUrl); a text the secret scrub would change is dropped whole.
+ */
+export function settingsQrText(raw, scrub = (t) => t) {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  // Kotlin's Char.isISOControl: U+0000..U+001F and U+007F..U+009F.
+  if (!v || v.length > contract.qr.settingsQr.maxChars || /[\u0000-\u001f\u007f-\u009f]/.test(v)) return null;
+  const lower = v.toLowerCase();
+  if ((lower.startsWith("http:") || lower.startsWith("https:")) && qrUrl(v) === null) return null;
+  return scrub(v) === v ? v : null;
+}
+
+/**
  * An action answer's `link` (additive action.link), as PluginSettingsUi.linkOf: null when Kino cannot use it, with one drop
  * line. Only ANOTHER declared action than `actionKey` (the one that answered) may confirm it; the candidate is never clipped.
  */
@@ -1973,6 +2177,13 @@ export function checkSettingsOutput(fn, value, manifest, scrub = (t) => t, drop 
     for (const s of settings.filter((x) => x.type === "status")) {
       const t = isObj(value) ? text(value[s.key], ui.statusMaxChars) : null;
       if (t) out[s.key] = t;
+    }
+    // apiVersion 13: a qr setting's text, kept whole or not at all (PluginSettingsUi.qrText).
+    for (const s of settings.filter((x) => x.type === "qr")) {
+      const raw = isObj(value) ? value[s.key] : undefined;
+      const t = settingsQrText(raw, scrub);
+      if (t !== null) out[s.key] = t;
+      else if (raw !== undefined && raw !== null) drop(`settingsStatus answered a qr text Kino does not draw ("${s.key}")`);
     }
     return out;
   }
@@ -2049,7 +2260,7 @@ export function checkSyncAnswer(fn, value, manifest) {
   throw new Error(`not a sync export: ${fn}`);
 }
 
-export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false, migrateInput = null, segmentsQuery = null } = {}) {
+export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false, alternative = false, migrateInput = null, segmentsQuery = null } = {}) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
   const ctx = {
@@ -2062,6 +2273,8 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
     // 18+ entries are apiVersion 6: kept and marked (shown behind the person's 18+ code); below it, dropped.
     allowAdult: Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= o().adultApiVersion,
     servers,
+    // imageSource (apiVersion 13): a poster, backdrop, still or hero image may be { source: "plugin", handle }.
+    imageRefs: allowsImageRefs(manifest),
   };
   const liveAdult = Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= live().adultApiVersion;
   const json = JSON.stringify(value === undefined ? null : value);
@@ -2073,9 +2286,11 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
     case "home": return { value: rows(parsed, { ...ctx, homeLive: Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= o().homeLiveApiVersion }, drop), drops };
     case "section": return { value: section(parsed, ctx, drop), drops };
     case "categories": return { value: categories(parsed, ctx, drop), drops };
-    case "episodes": return { value: episodes(parsed, drop, servers), drops };
+    case "episodes": return { value: episodes(parsed, drop, servers, ctx.imageRefs), drops };
+    // imageSource (apiVersion 13): what the app keeps of an image answer, or the reason it shows the placeholder.
+    case "image": return { value: imageAnswer(parsed), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
-    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm"), liveChannel, drop }), drops };
+    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm"), liveChannel, alternative, drop }), drops };
     case "sign": {
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed) || parsed.headers === null || typeof parsed.headers !== "object" || Array.isArray(parsed.headers)) {
         throw new Error("sign didn't return { headers }");

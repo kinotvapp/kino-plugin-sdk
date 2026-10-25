@@ -13,11 +13,13 @@
 // from `.kino-secrets.json` next to the manifest (`{ "<name>": "<value>" }`, written by hand during
 // development; `seal.mjs` only ever produces the sealed string that goes in the manifest) and
 // simulates the app's marker, substitution, declared-host-and-https and redaction rules on top of that.
-import { createCipheriv, createDecipheriv, createHash, createHmac, createPublicKey, diffieHellman, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, sign as nodeSign, verify as nodeVerify } from "node:crypto";
+import { kitCall } from "./kit-call.mjs";
+import { gunzipSync } from "node:zlib";
+import { createCipheriv, createDecipheriv, createHash, createHmac, createPublicKey, diffieHellman, generateKeyPairSync, pbkdf2Sync, randomBytes, randomUUID, timingSafeEqual, sign as nodeSign, verify as nodeVerify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { anyFetchRefusal, anyHostBudget, contract, fetchAnyHost, hostMatches, isUserServer, kb, schemeAllowed, syncCallCap } from "./contract.mjs";
+import { allowsByteSource, allowsImageRefs, anyFetchRefusal, BYTE_STREAM_INVALID, byteSourceOf, readAnswer, readRangeProblem, anyHostBudget, contract, fetchAnyHost, hostMatches, imageAnswer, imageRefOf, isUserServer, kb, schemeAllowed, syncCallCap } from "./contract.mjs";
 import { decodeCipherKey } from "./seal.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "./kino-rank.mjs";
 
@@ -154,6 +156,8 @@ export function errorReport(err, pluginName = "Plugin") {
 }
 
 export { hostMatches as hostAllowed };
+// Which export the kit is running (kit-call.mjs): a test wraps a direct kino.qr.scan in kitCall.run("action", …).
+export { kitCall };
 
 // --- kino.crypto key pairs (apiVersion 6), with Node's crypto: the same answers, formats and errors
 // as the app's PluginKeys / PluginKeyRing. A private key is a KeyObject kept in this kino's own Map;
@@ -596,6 +600,8 @@ export function tokenBucket(capacity, windowMs, now = Date.now) {
   };
 }
 
+// A plugin runs in its own vm realm, so its Uint8Array is not `instanceof` this realm's; the app (one realm) accepts exactly Uint8Array.
+const isUint8Array = (v) => ArrayBuffer.isView(v) && Object.prototype.toString.call(v) === "[object Uint8Array]";
 const plainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /** Kino 0.9.55's title normalisation (KinoMetaTitleMatch.normalise): lowercase, no accents, punctuation and spaces as one space. */
@@ -779,7 +785,7 @@ function deviceFor(device, env) {
  * kino.device (Kino 0.9.55, contract.kinoDevice): [device] ("phone" or "tv", run.mjs --device), else env KINO_DEVICE,
  * else "phone". Anything else throws: a typo must not silently test the other UI.
  */
-export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, nuvioFixture = undefined, env = process.env, now = Date.now, syncCall = false } = {}) {
+export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", device = undefined, storageFile = null, cookiesFile = null, secretsFile = null, config = {}, record = null, replay = null, fetchImpl = globalThis.fetch, metaFixture = undefined, tmdbKey = undefined, tmdbFixture = undefined, nuvioFixture = undefined, env = process.env, now = Date.now, syncCall = false, qrScan = undefined } = {}) {
   const f = contract.fetch;
   // [syncCall]: this kino runs a syncProvider's syncPull/syncPush (contract.fetch.syncCall): its requests and responses may
   // carry the declared blob, ceil(sync.maxBlobBytes * 4/3) + envelopeChars, like the app; every other call keeps the defaults.
@@ -788,6 +794,8 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
   const maxBodyBytes = syncCap ?? f.maxBodyBytes;
   const kinoDevice = deviceFor(device, env);
   const storage = loadJson(storageFile, {});
+  // apiVersion 13, capability "storageLarge": contract.storage.largeMaxTotalBytes / largeMaxValueBytes / largeMaxKeys / largeMaxKeyChars instead of maxTotalBytes.
+  const storageLarge = () => Array.isArray(manifest?.capabilities) && manifest.capabilities.includes("storageLarge");
   // An entry is a bare string (permanent, the format before ttlMs existed) or { v, e } (expires at
   // epoch ms `e`). Dropped lazily, on the next read or write that touches this instance -- never a
   // background timer -- so it stops counting against the cap the moment it is noticed.
@@ -1240,6 +1248,82 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
       throw kinoError("crypto_error", decrypt ? "couldn't decrypt: wrong key or iv" : "invalid crypto operation");
     }
   }
+  // --- kino.crypto byte ops (apiVersion 13), as PluginCrypto.kt: AES-256-IGE, big-integer modPow over hex, gunzip. A sealed
+  // value is refused in every field, whatever the op (an IGE call under a sealed key would be a decryption oracle). ---
+  const BYTES = k.bytesOps;
+  const INVALID_CRYPTO = "invalid crypto operation";
+  const refuseSealedAny = (...vs) => {
+    if (pluginSecrets && vs.some((v) => typeof v === "string" && (pluginSecrets.containsMarker(v) || pluginSecrets.containsCipherKeyMarker(v)))) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
+  };
+  function aesIge(dir, key, iv, data, p = {}) {
+    refuseSealedAny(dir, key, iv, data);
+    if (dir !== "encrypt" && dir !== "decrypt") throw kinoError("crypto_error", INVALID_CRYPTO);
+    return redactOut(out(igeBytes(dir === "encrypt", key, iv, data, p), p.outputEncoding || "base64"));
+  }
+  function igeBytes(encrypt, key, iv, data, p) {
+    const keyB = buf(key, p.keyEncoding || "utf8", "key"), ivB = buf(iv, p.ivEncoding || "utf8", "iv"), dataB = buf(data, p.inputEncoding || "utf8", "data");
+    if (keyB.length !== 32 || ivB.length !== 32 || dataB.length % 16 !== 0) throw kinoError("crypto_error", INVALID_CRYPTO);
+    const c = encrypt ? createCipheriv("aes-256-ecb", keyB, null) : createDecipheriv("aes-256-ecb", keyB, null);
+    c.setAutoPadding(false);
+    let y = Buffer.from(ivB.subarray(0, 16)), x = Buffer.from(ivB.subarray(16, 32));
+    const res = Buffer.alloc(dataB.length);
+    const tmp = Buffer.alloc(16);
+    for (let i = 0; i < dataB.length; i += 16) {
+      const block = dataB.subarray(i, i + 16);
+      for (let j = 0; j < 16; j++) tmp[j] = block[j] ^ (encrypt ? y[j] : x[j]);
+      const e = c.update(tmp);
+      for (let j = 0; j < 16; j++) res[i + j] = e[j] ^ (encrypt ? x[j] : y[j]);
+      if (encrypt) { x = Buffer.from(block); y = Buffer.from(res.subarray(i, i + 16)); } else { x = Buffer.from(res.subarray(i, i + 16)); y = Buffer.from(block); }
+    }
+    return res;
+  }
+  const bigHex = (v, field) => {
+    if (typeof v !== "string") throw kinoError("crypto_error", `missing "${field}"`);
+    const t = v.replace(/^0+/, "");
+    if (/[^0-9a-f]/i.test(t)) throw kinoError("crypto_error", `"${field}" is not valid hex`);
+    if (t.length > BYTES.modPowMaxBits / 4) throw kinoError("crypto_error", field === "mod" ? `the modulus is over ${BYTES.modPowMaxBits} bits` : `"${field}" is over ${BYTES.modPowMaxBits} bits`);
+    if (v === "") throw kinoError("crypto_error", INVALID_CRYPTO);
+    return t === "" ? 0n : BigInt("0x" + t);
+  };
+  function modPow(base, exp, mod) {
+    refuseSealedAny(base, exp, mod);
+    const b = bigHex(base, "base"), e = bigHex(exp, "exp"), m = bigHex(mod, "mod");
+    if (m === 0n) throw kinoError("crypto_error", INVALID_CRYPTO);
+    let result = 1n % m, sq = b % m, ex = e;
+    while (ex > 0n) { if (ex & 1n) result = (result * sq) % m; sq = (sq * sq) % m; ex >>= 1n; }
+    return redactOut(result.toString(16).padStart((m.toString(16).length + 1 >> 1) * 2, "0"));
+  }
+  function gunzip(data, p = {}) {
+    refuseSealedAny(data);
+    const input = buf(data, p.inputEncoding || "base64", "data");
+    let raw;
+    try {
+      raw = gunzipSync(input, { maxOutputLength: k.maxDataBytes });
+    } catch (e) {
+      if (e && e.code === "ERR_BUFFER_TOO_LARGE") throw kinoError("crypto_error", "the unzipped data is over 5 MB");
+      throw kinoError("crypto_error", INVALID_CRYPTO);
+    }
+    return redactOut(out(raw, p.outputEncoding || "utf8"));
+  }
+  function convert(data, from, to) {
+    refuseSealedAny(data, from, to);
+    if (!k.encodings.includes(from)) throw kinoError("crypto_error", "unknown encoding: " + String(from ?? "").slice(0, 20));
+    if (!k.encodings.includes(to)) throw kinoError("crypto_error", "unknown encoding: " + String(to ?? "").slice(0, 20));
+    return redactOut(out(buf(data, from, "data"), to));
+  }
+  // AES-256-IGE decryption checked by SHA-256(macPrefix || plaintext)[macOffset, macOffset + mac.length) === mac, as PluginCrypto.kt.
+  function aesIgeVerify(key, iv, data, p = {}) {
+    refuseSealedAny(key, iv, data, p.mac, p.macPrefix);
+    const macEnc = p.macEncoding || "hex";
+    const mac = buf(p.mac, macEnc, "mac");
+    const prefix = p.macPrefix === undefined || p.macPrefix === null ? Buffer.alloc(0) : buf(p.macPrefix, macEnc, "macPrefix");
+    const offset = p.macOffset === undefined || p.macOffset === null ? 0 : p.macOffset;
+    if (!Number.isInteger(offset) || offset < 0 || offset > 31 || mac.length === 0 || offset + mac.length > 32) throw kinoError("crypto_error", INVALID_CRYPTO);
+    const plain = igeBytes(false, key, iv, data, p);
+    const digest = createHash("sha256").update(prefix).update(plain).digest();
+    if (!timingSafeEqual(digest.subarray(offset, offset + mac.length), mac)) throw kinoError("crypto_error", "the mac doesn't match");
+    return redactOut(out(plain, p.outputEncoding || "base64"));
+  }
   const crypto = Object.freeze({
     hash(alg, data, p = {}) {
       if (sealedIn(String(data))) throw kinoError("crypto_error", SEALED_CRYPTO_REFUSED);
@@ -1273,6 +1357,7 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
       return redactOut(out(randomBytes(n), enc));
     },
     uuid: () => redactOut(randomUUID()),
+    ...(contract.apiVersion >= BYTES.apiVersion ? { aesIge, modPow, gunzip, convert, aesIgeVerify } : {}),
     // apiVersion 6's key pairs: the kit reports apiVersion contract.apiVersion, so they are here whenever the app's are.
     ...(contract.apiVersion >= KP.apiVersion ? keyPairApi({ pluginSecrets, buf }) : {}),
   });
@@ -1457,6 +1542,162 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
     return body;
   }
 
+  // --- kino.ws (apiVersion 13, capability "socket"): the app's PluginWebSocket over Node's global WebSocket. wss:// only,
+  // a host the manifest declares (never an IP literal or a local name, which cannot be declared), at most
+  // contract.socket.maxSockets open, at most contract.socket.maxQueuedBytes queued unread (then `limit`). ---
+  const wsApi = (() => {
+    if (!(manifest.capabilities || []).includes("socket") || typeof WebSocket !== "function") return null;
+    const C = contract.socket;
+    let live = 0;
+    // Frames as strings (contract.socket.encodings), as the app's prelude.js and WsFrames: an object with `encoding`
+    // "hex" or "base64" is the only option; the cap is on the decoded size; decoding is strict (canonical form only).
+    const wsEncoding = (opts) => {
+      if (opts === null || typeof opts !== "object") return null;
+      const e = opts.encoding;
+      if (e === undefined || e === null) return null;
+      if (!C.encodings.includes(e)) throw kinoError("invalid_request", 'encoding must be "hex" or "base64"');
+      return e;
+    };
+    const wsEncodedBytes = (s, encoding) => {
+      const n = s.length;
+      if (encoding === "hex") return (n + 1) >> 1;
+      const pad = n > 0 && s.charCodeAt(n - 1) === 61 ? (n > 1 && s.charCodeAt(n - 2) === 61 ? 2 : 1) : 0;
+      return (n >> 2) * 3 + (n % 4 === 0 ? 0 : (n % 4) - 1) - pad;
+    };
+    const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const wsDecode = (s, encoding) => {
+      if (encoding === "hex") {
+        if (s.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(s)) throw kinoError("invalid_request", "the frame is not valid hex");
+        return new Uint8Array(Buffer.from(s, "hex"));
+      }
+      const bad = () => kinoError("invalid_request", "the frame is not valid base64");
+      if (s.length % 4 !== 0) throw bad();
+      const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+      if (!/^[A-Za-z0-9+/]*$/.test(s.slice(0, s.length - pad))) throw bad();
+      if (pad > 0 && (B64.indexOf(s[s.length - pad - 1]) & (pad === 2 ? 15 : 3)) !== 0) throw bad();
+      return new Uint8Array(Buffer.from(s, "base64"));
+    };
+    const open = (url, options) => new Promise((resolve, reject) => {
+      let u;
+      try { u = new URL(String(url)); } catch { reject(kinoError("invalid_request", "invalid URL")); return; }
+      if (u.protocol !== "wss:") { reject(kinoError("not_https", "only wss:// is allowed")); return; }
+      const literal = /^[\d.]+$/.test(u.hostname) || u.hostname.includes(":") || u.hostname.startsWith("[");
+      if (literal || !hostMatches(u.hostname, manifest.hosts)) { reject(hostRefused("host not allowed: " + u.hostname, u.hostname)); return; }
+      // As PluginHttp.authorizeSocket: wss on port 443 only (URL drops the default port, so "" is 443).
+      if (u.port !== "" && u.port !== "443") { reject(hostRefused("only port 443 is allowed for wss://", u.hostname)); return; }
+      if (live >= C.maxSockets) { reject(kinoError("limit", `too many open sockets (at most ${C.maxSockets})`)); return; }
+      live++;
+      const protocol = options && typeof options.protocol === "string" && options.protocol ? options.protocol : undefined;
+      const sock = protocol ? new WebSocket(u.href, protocol) : new WebSocket(u.href);
+      sock.binaryType = "arraybuffer";
+      const queue = [];
+      let queued = 0, waiter = null, reason = null, settled = false;
+      const end = (why) => { if (reason === null) { reason = why; live--; } if (waiter) { const w = waiter; waiter = null; w(); } };
+      sock.addEventListener("message", (ev) => {
+        const frame = typeof ev.data === "string" ? new TextEncoder().encode(ev.data) : new Uint8Array(ev.data);
+        if (reason !== null) return;
+        queued += frame.length;
+        if (queued > C.maxQueuedBytes) { end("limit"); try { sock.close(); } catch { /* already closing */ } return; }
+        queue.push(frame);
+        if (waiter) { const w = waiter; waiter = null; w(); }
+      });
+      sock.addEventListener("close", () => end("closed"));
+      sock.addEventListener("error", () => { if (!settled) { settled = true; end("closed"); reject(kinoError("network", "network error")); } });
+      sock.addEventListener("open", () => {
+        settled = true;
+        resolve(Object.freeze({
+          send: async (data, options) => {
+            const encoding = wsEncoding(options);
+            if (typeof data === "string" && encoding !== null) {
+              if (wsEncodedBytes(data, encoding) > C.maxSendBytes) throw kinoError("too_large", "frame too large");
+              const frame = wsDecode(data, encoding);
+              if (reason !== null || sock.readyState !== 1) throw kinoError("closed", "the socket is closed");
+              sock.send(frame);
+              return;
+            }
+            if (!isUint8Array(data)) throw kinoError("invalid_request", encoding === null ? "send() takes a Uint8Array" : "send() takes a Uint8Array or an encoded string");
+            if (data.length > C.maxSendBytes) throw kinoError("too_large", "frame too large");
+            if (reason !== null || sock.readyState !== 1) throw kinoError("closed", "the socket is closed");
+            sock.send(data);
+          },
+          recv: async (timeoutMs, options) => {
+            const encoding = wsEncoding(options);
+            const ms = Math.min(timeoutMs === undefined ? 30000 : Number.isInteger(timeoutMs) && timeoutMs >= 0 ? timeoutMs : 0, C.maxRecvMs);
+            if (queue.length === 0 && reason === null) {
+              await new Promise((r) => { const t = setTimeout(() => { waiter = null; r(); }, ms); waiter = () => { clearTimeout(t); r(); }; });
+            }
+            if (queue.length > 0) {
+              const f = queue.shift();
+              queued -= f.length;
+              return encoding === null ? f : Buffer.from(f.buffer, f.byteOffset, f.length).toString(encoding === "hex" ? "hex" : "base64");
+            }
+            if (reason !== null) throw kinoError(reason, "the socket is closed");
+            return null;
+          },
+          close: async () => { end("closed"); try { sock.close(); } catch { /* already closed */ } },
+        }));
+      });
+    });
+    return Object.freeze({ open });
+  })();
+
+  // --- kino.catalog (apiVersion 13, capability "catalog"): the app's PluginCatalogDb mirrored in memory (catalogAnswer
+  // below), behind the same wrapper the app's prelude.js puts in front of it. Undefined without the capability. ---
+  const catalogApi = (manifest.capabilities || []).includes("catalog") ? catalogKino(newCatalogState()) : null;
+
+  // --- kino.qr (apiVersion 13, capability "qrScan"): the app's PluginQrScanner behind its prelude wrapper. Node has no
+  // camera: the `qrScan` option of createKino is the person, `async ({ title, titleEn }) =>` the scanned text or null (a
+  // cancel); it may throw a kinoError (permission_denied, ...). Without it, and on a TV (device "tv"), the scan is
+  // unavailable, as on a device without a camera. A text the app would not accept (empty, over contract.qr.maxScanChars)
+  // is not taken: the app's scanner would keep looking until its timeout, so the kit answers timeout at once. ---
+  // PluginQrScanner.QR_FUNCTIONS and FORMAT_RANGES (prelude.js has the same list): where a scan may start, and the
+  // characters a title may not hold (every ISO control, every Unicode format character, the line and paragraph separators).
+  const QR_FUNCTIONS = [contract.settings.ui.exports.action, contract.manifest.panel.exports.action];
+  const QR_REFUSED = [[0x00AD, 0x00AD], [0x0600, 0x0605], [0x061C, 0x061C], [0x06DD, 0x06DD], [0x070F, 0x070F], [0x0890, 0x0891], [0x08E2, 0x08E2],
+    [0x180E, 0x180E], [0x200B, 0x200F], [0x2028, 0x202E], [0x2060, 0x2064], [0x2066, 0x206F], [0xFEFF, 0xFEFF], [0xFFF9, 0xFFFB],
+    [0x110BD, 0x110BD], [0x110CD, 0x110CD], [0x13430, 0x1343F], [0x1BCA0, 0x1BCA3], [0x1D173, 0x1D17A], [0xE0001, 0xE0001], [0xE0020, 0xE007F]];
+  const qrRefusedChar = (v) => [...v].some((ch) => { const cp = ch.codePointAt(0); return cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) || QR_REFUSED.some(([a, b]) => cp >= a && cp <= b); });
+  const QR_KIT_MAX_IGNORED = 10;
+  const qrApi = (() => {
+    if (!(manifest.capabilities || []).includes(contract.qr.capability)) return null;
+    const Q = contract.qr;
+    let open = false;
+    const scan = async (options) => {
+      await null;
+      const o = options === undefined || options === null ? {} : options;
+      if (typeof o !== "object") throw kinoError("invalid_request", "kino.qr.scan takes { title, titleEn }");
+      const ask = {};
+      for (const k of ["title", "titleEn"]) {
+        const v = o[k];
+        if (v === undefined || v === null) continue;
+        if (typeof v !== "string") throw kinoError("invalid_request", `kino.qr.scan: ${k} must be a string`);
+        if (v.length > Q.maxTitleChars) throw kinoError("invalid_request", `kino.qr.scan: ${k} is over ${Q.maxTitleChars} characters`);
+        if (qrRefusedChar(v)) throw kinoError("invalid_request", `kino.qr.scan: ${k} holds a control or formatting character`);
+        ask[k] = v.trim();
+      }
+      // The app's order: the request, the device, where the call comes from, the open scan.
+      if (kinoDevice === "tv" || typeof qrScan !== "function") throw kinoError("unavailable", "kino.qr.scan: this device can't scan a QR code (a TV, or a device without a camera)");
+      if (!QR_FUNCTIONS.includes(kitCall.getStore())) throw kinoError("not_allowed", "kino.qr.scan only runs from a settings action or panelAction");
+      if (open) throw kinoError("busy", "kino.qr.scan: a scan is already open");
+      open = true;
+      try {
+        // A code the app would not take (empty, or over maxScanChars) is ignored there and the scanner keeps looking: the
+        // fake is asked again with invalid: true, and after QR_KIT_MAX_IGNORED of them the kit answers the app's timeout.
+        let invalid = false;
+        for (let i = 0; i <= QR_KIT_MAX_IGNORED; i++) {
+          const text = await qrScan({ title: ask.title || "", titleEn: ask.titleEn || "", ...(invalid ? { invalid: true } : {}) });
+          if (text === null || text === undefined) return null;
+          if (typeof text === "string" && text.length > 0 && text.length <= Q.maxScanChars) return text;
+          invalid = true;
+        }
+        throw kinoError("timeout", `kino.qr.scan: nothing was scanned in ${Q.timeoutMs / 1000} s`);
+      } finally {
+        open = false;
+      }
+    };
+    return Object.freeze({ scan });
+  })();
+
   const kino = Object.freeze({
     apiVersion: contract.apiVersion,
     appVersion,
@@ -1492,11 +1733,24 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
           expiresAt = Date.now() + ttlMs;
         }
         purgeExpiredStorage();
-        const previous = storage[k];
-        storage[k] = expiresAt === undefined ? value : { v: value, e: expiresAt };
-        if (Buffer.byteLength(JSON.stringify(storage)) > contract.storage.maxTotalBytes) {
-          if (previous === undefined) delete storage[k]; else storage[k] = previous;
-          throw kinoError("too_large", `plugin storage full (${kb(contract.storage.maxTotalBytes)})`);
+        // apiVersion 13, capability "storageLarge": the app's larger quota (PluginStorage, one file per value there), else
+        // the 256 KB one. The large total counts every key and value in UTF-8, as the app's index does.
+        if (storageLarge()) {
+          const st = contract.storage;
+          if (k.length > st.largeMaxKeyChars) throw kinoError("invalid_request", `kino.storage.set: with storageLarge a key is at most ${st.largeMaxKeyChars} characters`);
+          if (Buffer.byteLength(value) > st.largeMaxValueBytes) throw kinoError("too_large", `plugin storage full (${kb(st.largeMaxValueBytes)} per value)`);
+          const others = Object.keys(storage).filter((x) => x !== k);
+          if (others.length >= st.largeMaxKeys) throw kinoError("too_large", `plugin storage full (${st.largeMaxKeys} keys)`);
+          const total = others.reduce((sum, x) => sum + Buffer.byteLength(x) + Buffer.byteLength(storageEntryValue(storage[x])), 0);
+          if (total + Buffer.byteLength(k) + Buffer.byteLength(value) > st.largeMaxTotalBytes) throw kinoError("too_large", `plugin storage full (${kb(st.largeMaxTotalBytes)})`);
+          storage[k] = expiresAt === undefined ? value : { v: value, e: expiresAt };
+        } else {
+          const previous = storage[k];
+          storage[k] = expiresAt === undefined ? value : { v: value, e: expiresAt };
+          if (Buffer.byteLength(JSON.stringify(storage)) > contract.storage.maxTotalBytes) {
+            if (previous === undefined) delete storage[k]; else storage[k] = previous;
+            throw kinoError("too_large", `plugin storage full (${kb(contract.storage.maxTotalBytes)})`);
+          }
         }
         saveJson(storageFile, storage);
       },
@@ -1507,6 +1761,12 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", devic
       get: (key) => values[String(key)],
       all: () => ({ ...values }),
     }),
+    // apiVersion 13, capability "socket": undefined without it, like the app.
+    ...(wsApi ? { ws: wsApi } : {}),
+    // apiVersion 13, capability "catalog": undefined without it, like the app.
+    ...(catalogApi ? { catalog: catalogApi } : {}),
+    // apiVersion 13, capability "qrScan": undefined without it, like the app.
+    ...(qrApi ? { qr: qrApi } : {}),
     cookies: Object.freeze({
       get(url, name) {
         let u;
@@ -1599,11 +1859,14 @@ export function signingLane(kino) {
   const why = (api) => kinoError("not_allowed", `sign() can't use ${api}: whatever you need must come in signContext`);
   const refused = (api) => () => { throw why(api); };
   const methods = (names, api) => Object.freeze(Object.fromEntries(names.map((n) => [n, refused(api)])));
+  // The app's lane host is no catalog or QR host: sign() has no kino.catalog and no kino.qr at all.
+  const { catalog: _noCatalog, qr: _noQr, ...laneKino } = kino;
   return Object.freeze({
-    ...kino,
+    ...laneKino,
     fetch: async () => { throw kinoError("host_not_allowed", "sign can't use the network"); },
     storage: methods(["get", "set", "remove", "keys"], "kino.storage"),
     cookies: methods(["get", "clear"], "kino.cookies"),
+    ws: Object.freeze({ open: async () => { throw why("kino.ws"); } }),
     sleep: async () => { throw why("kino.sleep"); },
     meta: async () => { throw why("kino.meta"); },
     tmdb: async () => { throw why("kino.tmdb"); },
@@ -1653,4 +1916,307 @@ export function browserCaptureOptions(opts) {
     if (!new RegExp(C.waitForCookiePattern).test(cookie)) throw kinoError("invalid_request", "waitForCookie must be a cookie name");
   }
   if (captureAll && match === null && cookie !== null) throw kinoError("invalid_request", "captureAll needs match when waitForCookie is used");
+}
+
+// --- kino.catalog (apiVersion 13): the app's PluginCatalogDb, in memory --------------------------------------------------
+// Same validation order, messages, normalisation, matching and ordering as the app (pinned by the shared vectors in
+// docs/plugins/catalog-vectors.json, which the app's PluginCatalogTest runs too). Two differences, both documented: the
+// catalog lives in memory for one createKino (the app keeps a SQLite file), and maxDbBytes is checked against an estimate
+// of the file size (the app measures SQLite's used pages).
+const CAT = contract.catalog;
+const CATALOG_DAMAGED = "kino.catalog: the catalog file was damaged and has been reset to empty; rebuild it";
+// JavaScript's \s, written out so the app's Kotlin regex can be the very same class.
+// Control characters other than whitespace (NUL, escape, C1): dropped from what is searched, as the app does.
+const CATALOG_CONTROLS = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F]+/g;
+const CATALOG_SPACES = /[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+/;
+
+/** A title as the catalog searches it: lower-cased, then NFD without combining marks ("Película" -> "pelicula"). */
+export function catalogNorm(s) {
+  return String(s).toLowerCase().normalize("NFD").replace(/\p{Mn}+/gu, "").replace(CATALOG_CONTROLS, "");
+}
+
+/** A query's tokens: normalised like a title, split on whitespace, each once. */
+export function catalogTokens(q) {
+  return [...new Set(catalogNorm(q).split(CATALOG_SPACES).filter((t) => t.length > 0))];
+}
+
+/** SQLite's BINARY order over UTF-8 text is code-point order (not JavaScript's UTF-16 order). */
+function cmpCodePoints(a, b) {
+  const x = [...a], y = [...b];
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const d = x[i].codePointAt(0) - y[i].codePointAt(0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return x.length === y.length ? 0 : x.length < y.length ? -1 : 1;
+}
+
+const nonFinite = (v) => typeof v === "number" && !Number.isFinite(v);
+const cmpNum = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const wholeNumber = (v) => typeof v === "number" && Number.isInteger(v);
+
+export function newCatalogState(maxDbBytes = CAT.maxDbBytes) {
+  return { rows: new Map(), bytes: 0, maxDbBytes };
+}
+
+// An estimate of what a row costs in the app's SQLite file: the row (id, title, norm, sort, data) plus its two indexes.
+function catalogRowBytes(r) {
+  return Buffer.byteLength(r.id) * 3 + Buffer.byteLength(r.title) * 2 + Buffer.byteLength(r.norm) * 2 + (r.data === null ? 0 : Buffer.byteLength(r.data)) + 40;
+}
+
+class CatalogRefusal extends Error {
+  constructor(code, message) { super(message); this.code = code; }
+}
+const refuse = (code, message) => { throw new CatalogRefusal(code, message); };
+
+function catalogItem(i, raw) {
+  if (!isPlainObject(raw)) refuse("invalid_request", `kino.catalog.upsert: item ${i} must be an object`);
+  const id = raw.id;
+  if (typeof id !== "string" || id.length === 0) refuse("invalid_request", `kino.catalog.upsert: item ${i} needs an id, a string of 1 to ${CAT.maxIdChars} characters`);
+  if (id.length > CAT.maxIdChars) refuse("too_large", `kino.catalog.upsert: item ${i} id is over ${CAT.maxIdChars} characters (maxIdChars)`);
+  const title = raw.title;
+  if (typeof title !== "string") refuse("invalid_request", `kino.catalog.upsert: item ${i} needs a title, a string of at most ${CAT.maxTitleChars} characters`);
+  if (title.length > CAT.maxTitleChars) refuse("too_large", `kino.catalog.upsert: item ${i} title is over ${CAT.maxTitleChars} characters (maxTitleChars)`);
+  let sort = 0;
+  if (raw.sort !== undefined && raw.sort !== null) {
+    if (!wholeNumber(raw.sort) || !Number.isSafeInteger(raw.sort)) refuse("invalid_request", `kino.catalog.upsert: item ${i} sort must be a whole number`);
+    sort = raw.sort;
+  }
+  let data = null;
+  if (raw.data !== undefined && raw.data !== null) {
+    const d = raw.data;
+    if (typeof d !== "string") refuse("invalid_request", `kino.catalog.upsert: item ${i} data must be an object`);
+    if (Buffer.byteLength(d) > CAT.maxDataBytes) refuse("too_large", `kino.catalog.upsert: item ${i} data is over ${CAT.maxDataBytes} bytes as JSON (maxDataBytes)`);
+    let ok = d.length >= 2 && d[0] === "{" && d[d.length - 1] === "}";
+    if (ok) { try { ok = isPlainObject(JSON.parse(d)); } catch { ok = false; } }
+    if (!ok) refuse("invalid_request", `kino.catalog.upsert: item ${i} data must be an object`);
+    data = d;
+  }
+  return { id, title, norm: catalogNorm(title), sort, data };
+}
+
+function catalogIdsOf(op, args) {
+  const raw = args.ids;
+  if (!Array.isArray(raw)) refuse("invalid_request", `kino.catalog.${op} takes an array of ids`);
+  if (raw.length > CAT.maxUpsertBatch) refuse("too_large", `kino.catalog.${op}: at most ${CAT.maxUpsertBatch} ids per call (maxUpsertBatch)`);
+  raw.forEach((id, i) => { if (typeof id !== "string") refuse("invalid_request", `kino.catalog.${op}: id ${i} must be a string`); });
+  return [...new Set(raw)];
+}
+
+const catalogRowOut = (r) => ({ id: r.id, title: r.title, sort: r.sort, data: r.data });
+
+function catalogOp(state, op, args) {
+  switch (op) {
+    case "upsert": {
+      if (!Array.isArray(args.items)) refuse("invalid_request", "kino.catalog.upsert takes an array of items");
+      if (args.items.length > CAT.maxUpsertBatch) refuse("too_large", `kino.catalog.upsert: at most ${CAT.maxUpsertBatch} items per call (maxUpsertBatch)`);
+      const items = args.items.map((raw, i) => catalogItem(i, raw));
+      // All or nothing, like the app's transaction: the totals are computed before anything is written.
+      const after = new Map();
+      for (const it of items) after.set(it.id, it);
+      let count = state.rows.size, bytes = state.bytes;
+      for (const [id, it] of after) {
+        const old = state.rows.get(id);
+        if (old) bytes -= catalogRowBytes(old); else count++;
+        bytes += catalogRowBytes(it);
+      }
+      if (count > CAT.maxItems) refuse("limit", `kino.catalog.upsert: the catalog is full (maxItems ${CAT.maxItems})`);
+      if (bytes > state.maxDbBytes) refuse("limit", `kino.catalog.upsert: the catalog file is full (maxDbBytes ${state.maxDbBytes % 1048576 === 0 ? `${state.maxDbBytes / 1048576} MiB` : `${state.maxDbBytes} bytes`})`);
+      for (const [id, it] of after) state.rows.set(id, it);
+      state.bytes = bytes;
+      return { count: items.length };
+    }
+    case "search": {
+      let q = "";
+      if (args.q !== undefined && args.q !== null) {
+        if (typeof args.q !== "string") refuse("invalid_request", "kino.catalog.search: q must be a string");
+        q = args.q;
+      }
+      if (q.length > CAT.maxQueryChars) refuse("too_large", `kino.catalog.search: q is over ${CAT.maxQueryChars} characters (maxQueryChars)`);
+      let limit = CAT.defaultSearchLimit;
+      if (args.limit !== undefined && args.limit !== null) {
+        if (!wholeNumber(args.limit) || args.limit < 1) refuse("invalid_request", `kino.catalog.search: limit must be a whole number from 1 to ${CAT.maxSearchLimit}`);
+        limit = args.limit;
+      }
+      if (limit > CAT.maxSearchLimit) refuse("too_large", `kino.catalog.search: limit is over ${CAT.maxSearchLimit} (maxSearchLimit)`);
+      let offset = 0;
+      if (args.offset !== undefined && args.offset !== null) {
+        if (!wholeNumber(args.offset) || args.offset < 0) refuse("invalid_request", `kino.catalog.search: offset must be a whole number from 0 to ${CAT.maxOffset}`);
+        offset = args.offset;
+      }
+      if (offset > CAT.maxOffset) refuse("too_large", `kino.catalog.search: offset is over ${CAT.maxOffset} (maxOffset)`);
+      let order = CAT.orders[0];
+      if (args.order !== undefined && args.order !== null) {
+        if (typeof args.order !== "string" || !CAT.orders.includes(args.order)) refuse("invalid_request", 'kino.catalog.search: order must be "newest", "oldest" or "title"');
+        order = args.order;
+      }
+      const tokens = catalogTokens(q);
+      const hits = [...state.rows.values()].filter((r) => tokens.every((t) => r.norm.includes(t)));
+      const byId = (a, b) => cmpCodePoints(a.id, b.id);
+      const sorters = {
+        newest: (a, b) => cmpNum(b.sort, a.sort) || byId(a, b),
+        oldest: (a, b) => cmpNum(a.sort, b.sort) || byId(a, b),
+        title: (a, b) => cmpCodePoints(a.norm, b.norm) || cmpCodePoints(a.title, b.title) || byId(a, b),
+      };
+      hits.sort(sorters[order]);
+      return { items: hits.slice(offset, offset + limit).map(catalogRowOut), total: hits.length };
+    }
+    case "get": {
+      const ids = catalogIdsOf("get", args);
+      return { items: ids.filter((id) => state.rows.has(id)).map((id) => catalogRowOut(state.rows.get(id))) };
+    }
+    case "remove": {
+      const ids = catalogIdsOf("remove", args);
+      let count = 0;
+      for (const id of ids) {
+        const old = state.rows.get(id);
+        if (old) { state.rows.delete(id); state.bytes -= catalogRowBytes(old); count++; }
+      }
+      return { count };
+    }
+    case "clear":
+      state.rows.clear();
+      state.bytes = 0;
+      return {};
+    case "count":
+      return { count: state.rows.size };
+    default:
+      return refuse("invalid_request", "kino.catalog: unknown operation");
+  }
+}
+
+/**
+ * One catalog operation as the app's PluginCatalogDb.answer takes it: [op] and its arguments as the prelude sends them
+ * (JSON text). Answers JSON text; a refusal is {"error":{code,message}}, never thrown.
+ */
+export function catalogAnswer(state, op, argsJson) {
+  try {
+    let args;
+    try { args = JSON.parse(argsJson); } catch { args = undefined; }
+    if (!isPlainObject(args)) refuse("invalid_request", "kino.catalog: invalid request");
+    return JSON.stringify(catalogOp(state, op, args));
+  } catch (e) {
+    if (e instanceof CatalogRefusal) return JSON.stringify({ error: { code: e.code, message: e.message } });
+    throw e;
+  }
+}
+
+/** The app's prelude.js wrapper (kino.catalog), over [state]: the same request building, checks and typed errors. */
+function catalogKino(state) {
+  const call = async (op, args) => {
+    await null;
+    let text;
+    try { text = String(JSON.stringify(args)); } catch { throw kinoError("invalid_request", `kino.catalog.${op}: the request can't be turned into JSON`); }
+    if (text.length > CAT.maxRequestChars) throw kinoError("too_large", `kino.catalog.${op}: the request is over ${CAT.maxRequestChars} characters (maxRequestChars)`);
+    const r = JSON.parse(catalogAnswer(state, op, text));
+    if (r && r.error) throw kinoError(r.error.code, r.error.message);
+    return r;
+  };
+  const dataIn = (d) => {
+    if (d === undefined || d === null) return null;
+    let t;
+    try { t = JSON.stringify(d); } catch { t = undefined; }
+    return typeof t === "string" ? t : false;
+  };
+  const itemsOut = (list) => list.map((it) => ({ id: it.id, title: it.title, sort: it.sort, data: it.data === null || it.data === undefined ? null : JSON.parse(it.data) }));
+  const idsIn = async (op, ids) => {
+    await null;
+    if (!Array.isArray(ids)) throw kinoError("invalid_request", `kino.catalog.${op} takes an array of ids`);
+    if (ids.length > CAT.maxUpsertBatch) throw kinoError("too_large", `kino.catalog.${op}: at most ${CAT.maxUpsertBatch} ids per call (maxUpsertBatch)`);
+    return [...ids];
+  };
+  return Object.freeze({
+    async upsert(items) {
+      await null;
+      if (!Array.isArray(items)) throw kinoError("invalid_request", "kino.catalog.upsert takes an array of items");
+      if (items.length > CAT.maxUpsertBatch) throw kinoError("too_large", `kino.catalog.upsert: at most ${CAT.maxUpsertBatch} items per call (maxUpsertBatch)`);
+      // NaN and Infinity would become null in JSON (the default): refused first, as the app's prelude does.
+      items.forEach((it, i) => { if (it !== null && typeof it === "object" && nonFinite(it.sort)) throw kinoError("invalid_request", `kino.catalog.upsert: item ${i} sort must be a whole number`); });
+      const out = items.map((it) => (it === null || typeof it !== "object" ? it : { id: it.id, title: it.title, sort: it.sort, data: dataIn(it.data) }));
+      const r = await call("upsert", { items: out });
+      return { count: r.count };
+    },
+    async search(options) {
+      await null;
+      const o = options === undefined || options === null ? {} : options;
+      if (typeof o !== "object" || Array.isArray(o)) throw kinoError("invalid_request", "kino.catalog.search takes { q, limit, offset, order }");
+      if (nonFinite(o.limit)) throw kinoError("invalid_request", `kino.catalog.search: limit must be a whole number from 1 to ${CAT.maxSearchLimit}`);
+      if (nonFinite(o.offset)) throw kinoError("invalid_request", `kino.catalog.search: offset must be a whole number from 0 to ${CAT.maxOffset}`);
+      const r = await call("search", { q: o.q, limit: o.limit, offset: o.offset, order: o.order });
+      return { items: itemsOut(r.items), total: r.total };
+    },
+    async get(ids) { const r = await call("get", { ids: await idsIn("get", ids) }); return itemsOut(r.items); },
+    async remove(ids) { const r = await call("remove", { ids: await idsIn("remove", ids) }); return { count: r.count }; },
+    async clear() { await call("clear", {}); },
+    async count() { return (await call("count", {})).count; },
+  });
+}
+
+export { CATALOG_DAMAGED };
+
+// ---------- byteSource (apiVersion 13): asking a plugin's read export as Kino's proxy does ----------
+
+const readTurns = new WeakMap();
+
+/**
+ * Asks `plugin`'s `read({ handle, offset, length })` for a range of `stream` (a resolve answer `{ source: "plugin", handle,
+ * size, mime }`) the way Kino's PluginByteStreams does: only for a manifest that declares byteSource at apiVersion 13 and a
+ * plugin that exports `read`; only ranges Kino's proxy asks (offset a multiple of contract.byteSource.alignmentBytes and inside
+ * the stream, length 1 to chunkBytes); one read at a time per plugin; at most readTimeoutMs; the answer checked by
+ * `readAnswer` (exactly min(length, size - offset) bytes). Resolves with a Buffer; rejects with an Error saying why the
+ * player would stop. What it does not mirror: the proxy's read-ahead, cache and seek scheduling.
+ */
+export async function askRead(plugin, manifest, stream, offset, length, { timeoutMs = contract.byteSource.readTimeoutMs } = {}) {
+  const b = contract.byteSource;
+  if (!allowsByteSource(manifest)) throw new Error(`the manifest does not declare "byteSource" at apiVersion ${b.apiVersion}: Kino ignores a { source: "plugin" } stream`);
+  if (!plugin || typeof plugin[b.export] !== "function") throw new Error(`the plugin does not export ${b.export}(): the install fails with "El plugin no carga: le falta ${b.export}"`);
+  const s = byteSourceOf(stream);
+  if (!s) throw new Error(BYTE_STREAM_INVALID);
+  const problem = readRangeProblem(offset, length, s.size);
+  if (problem) throw new Error(`Kino never asks this range: ${problem}`);
+  const before = readTurns.get(plugin) || Promise.resolve();
+  const run = before.catch(() => {}).then(async () => {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`read did not answer within ${timeoutMs / 1000} s: the video stops`)), timeoutMs); });
+    try {
+      const out = await Promise.race([Promise.resolve().then(() => plugin[b.export]({ handle: s.handle, offset, length })), late]);
+      return readAnswer(JSON.parse(JSON.stringify(out === undefined ? null : out)), offset, length, s.size);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  readTurns.set(plugin, run);
+  return run;
+}
+
+// ---------- imageSource (apiVersion 13): asking a plugin's image export as Kino does ----------
+
+const imageTurns = new WeakMap();
+
+/**
+ * Asks `plugin`'s `image({ handle })` for the picture behind `ref` (`{ source: "plugin", handle }`, as your answer carries
+ * it), the way Kino's PluginImages does: only for a manifest that declares imageSource at apiVersion 13 and a plugin that
+ * exports `image`; one call at a time per plugin; at most contract.images.timeoutMs; the answer checked by `imageAnswer`
+ * (canonical base64, at most maxBytes decoded, an allowed mime whose signature the bytes carry). Resolves with
+ * `{ bytes: Buffer, mime }`; rejects with an Error naming why Kino would show the placeholder instead. What it does not
+ * mirror: the wait behind playback reads, the 5-minute memory of a failed handle and the disk cache (the app's scheduling).
+ */
+export async function askImage(plugin, manifest, ref, { timeoutMs = contract.images.timeoutMs } = {}) {
+  if (!allowsImageRefs(manifest)) throw new Error(`the manifest does not declare "${contract.images.capability}" at apiVersion ${contract.images.apiVersion}: a reference is no image`);
+  if (!plugin || typeof plugin[contract.images.export] !== "function") throw new Error(`the plugin does not export ${contract.images.export}(): the install fails with "El plugin no carga: le falta ${contract.images.export}"`);
+  const r = imageRefOf(ref);
+  if (!r) throw new Error(`not an image reference: { source: "${contract.images.source}", handle } with a handle of 1 to ${contract.images.maxHandleChars} characters and no control character`);
+  const before = imageTurns.get(plugin) || Promise.resolve();
+  const run = before.catch(() => {}).then(async () => {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`image did not answer within ${timeoutMs / 1000} s: Kino shows the placeholder`)), timeoutMs); });
+    try {
+      const out = await Promise.race([Promise.resolve().then(() => plugin[contract.images.export]({ handle: r.handle })), late]);
+      return imageAnswer(JSON.parse(JSON.stringify(out === undefined ? null : out)));
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  imageTurns.set(plugin, run);
+  return run;
 }

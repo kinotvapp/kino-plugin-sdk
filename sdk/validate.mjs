@@ -115,7 +115,7 @@ export async function runUiFunction(plugin, run, args, m, servers) {
     if (!keys.includes(args[0])) return problems.push(`no "action" setting has the key "${args[0]}": Kino never calls action("${args[0]}")${keys.length ? ` (actions: ${keys.join(", ")})` : ""}`), out(null);
   }
   if (typeof plugin[run] !== "function") return problems.push(`the plugin doesn't export ${run}()`), out(null);
-  if (run === "settingsStatus" && !settings.some((x) => x.type === "status")) notes.push("settingsStatus: no \"status\" setting, so Kino never calls it");
+  if (run === "settingsStatus" && !settings.some((x) => x.type === "status" || x.type === "qr")) notes.push("settingsStatus: no \"status\" or \"qr\" setting, so Kino never calls it");
   try {
     const answer = await call(plugin, run, args);
     if (run === "section" || run === "categories") {
@@ -126,7 +126,7 @@ export async function runUiFunction(plugin, run, args, m, servers) {
     const value = checkSettingsOutput(run, answer, m, undefined, (d) => drops.push(d), run === "action" ? args[0] : null);
     if (run === "settingsStatus") {
       Object.entries(value).forEach(([k, t]) => notes.push(`settingsStatus: ${k} shows "${t}"`));
-      const missing = settings.filter((x) => x.type === "status" && !(x.key in value)).map((x) => x.key);
+      const missing = settings.filter((x) => (x.type === "status" || x.type === "qr") && !(x.key in value)).map((x) => x.key);
       if (missing.length) notes.push(`settingsStatus: no line for ${missing.join(", ")} (Kino shows nothing there)`);
     }
     if (run === "action") notes.push(`action(${JSON.stringify(args[0])}): ${value.message ? `Kino shows "${value.message}"` : "no message"}${value.refresh ? ", then reads settingsStatus again" : ""}${value.clearSettings.length ? `, clears ${value.clearSettings.join(", ")}` : ""}${value.link ? `, then asks "Is this you, ${value.link.candidate}?" and runs ${JSON.stringify(value.link.confirm)} only if the person confirms` : ""}${value.link === null ? ", and shows its generic error for the link it cannot use" : ""}${value.setSettings ? `, then saves ${Object.keys(value.setSettings).join(", ")} as if typed` : ""}${value.setSettings === null ? ", and shows its generic error for the setSettings it cannot apply" : ""}`);
@@ -430,7 +430,7 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
         const lazy = run === "resolve" && Array.isArray(output.alternatives) ? output.alternatives.find((a) => a.ref !== undefined) : undefined;
         if (lazy) {
           try {
-            const copy = checkOutput("resolve", await call(plugin, "resolve", [lazy.ref]), m, servers);
+            const copy = checkOutput("resolve", await call(plugin, "resolve", [lazy.ref]), m, servers, { alternative: true });
             if (copy.value.alternatives) notes.push(`resolve(${JSON.stringify(lazy.ref)}): its own alternatives are ignored for a lazy copy (no recursion)`);
           } catch (e) {
             problems.push(`resolve(${JSON.stringify(lazy.ref)}) (a lazy copy): ${e.message}`);
