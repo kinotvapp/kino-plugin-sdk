@@ -4225,7 +4225,7 @@ test("apiVersion 5 manifests read as Kino 0.9.45 and 0.9.46 read them: every api
 // apiVersion 5 shipped in Kino 0.9.45 (signature.fromApp); 6 first ships in 0.9.50 (nothing ships until the built-in source removal is done).
 test("each apiVersion above 4 names the Kino it first ships in, and validate's note reads it", async () => {
   assert.equal(contract.manifest.signature.fromApp, "0.9.45");
-  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50", "7": "0.9.51", "8": "0.9.54", "9": "0.9.55", "10": "0.9.65", "11": "0.9.66", "12": "0.9.74", "13": "0.9.75" });
+  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50", "7": "0.9.51", "8": "0.9.54", "9": "0.9.55", "10": "0.9.65", "11": "0.9.66", "12": "0.9.74", "13": "0.9.74" });
   const dir = mkdtempSync(join(tmpdir(), "kino-from-app-"));
   try {
     writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
@@ -4233,6 +4233,11 @@ test("each apiVersion above 4 names the Kino it first ships in, and validate's n
     assert.deepEqual((await validate(dir)).notes, ["apiVersion 6: needs Kino 0.9.50 or later; older versions refuse it with \"This plugin needs a newer version of Kino\""]);
     writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 5 }));
     assert.deepEqual((await validate(dir)).notes, ["apiVersion 5: needs Kino 0.9.45 or later; older versions refuse it with \"This plugin needs a newer version of Kino\""]);
+    // 12 (sync providers) and 13 both arrive in Kino 0.9.74.
+    for (const v of [12, 13]) {
+      writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: v }));
+      assert.ok((await validate(dir)).notes.includes(`apiVersion ${v}: needs Kino 0.9.74 or later; older versions refuse it with "This plugin needs a newer version of Kino"`), String(v));
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

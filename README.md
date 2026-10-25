@@ -75,10 +75,10 @@ Los ajustes pueden llevar `devices` (`["phone"]` / `["tv"]`: dónde los dibuja K
 se dibuja, solo corre como `confirm` de un `link`), los dos desde apiVersion 12: `validate.mjs` los revisa como la app.
 Un proveedor completo y firmado para copiar: <https://github.com/kinotvapp/kino-plugin-sync-gram>.
 
-## apiVersion 13 (in development) / apiVersion 13 (en desarrollo)
+## apiVersion 13 (Kino 0.9.74, not published yet) / apiVersion 13 (Kino 0.9.74, todavía sin publicar)
 
-`apiVersion` 13 is **in development for the next Kino version and no released Kino accepts it yet** (today's Kino,
-0.9.74, refuses it; `contract.json` names 0.9.75 provisionally, so `validate.mjs` says "needs Kino 0.9.75 or later").
+`apiVersion` 13 arrives in **Kino 0.9.74, the next release, together with apiVersion 12; it is not published yet**, and
+every Kino before 0.9.74 refuses both (`validate.mjs` says "needs Kino 0.9.74 or later").
 The kit already checks and runs all of it with the app's rules:
 
 - `socket`: `kino.ws` over Node's global `WebSocket`, `wss://` to a declared host on port 443 only, 4 sockets, the frame
@@ -106,7 +106,8 @@ The kit already checks and runs all of it with the app's rules:
 The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
 <https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
 
-`apiVersion` 13 está en desarrollo para la próxima versión de Kino y **ningún Kino publicado lo acepta todavía**. El kit
+`apiVersion` 13 llega en **Kino 0.9.74, la próxima versión, junto con apiVersion 12; todavía no está publicada**, y
+todo Kino anterior a 0.9.74 rechaza las dos. El kit
 ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), `byteSource` (`run.mjs . resolve` acepta el
 stream `{ source: "plugin" }`, `run.mjs --size <bytes> . read <handle> <offset> <length>` y `askRead` llaman tu `read`),
 `storageLarge`, `kino.catalog`, `kino.qr.scan` con un lector de mentira y el ajuste `qr`, `"sync": false` en un ajuste `password` (se
