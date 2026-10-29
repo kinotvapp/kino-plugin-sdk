@@ -139,6 +139,18 @@ byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo
 13; every Kino before 0.9.74 refuses it. It brings plugin screens and the capabilities around them. The kit already
 checks and runs all of it with the app's rules:
 
+**Building a plugin's UI / Construir la interfaz de un plugin.** For any plugin that needs its own screen,
+configuration, onboarding, dashboard or panel, build it with Kino's screens UI (`screen`/`screenEvent`, Flutter-style
+components, per-size values, the phone and the TV from the same tree) and keep the old settings form only for
+compatibility; to stay installable on older Kinos keep your `apiVersion` and offer the screen through `enhancements`;
+put the code in `src/` and bundle it to `plugin.js` with esbuild (`init.mjs --bundle`); check it with
+`node sdk/validate.mjs .` and `node sdk/run.mjs . screen` (also `--device tv`). Guide and component catalogue:
+<https://kinotvapp.github.io/kino-plugins/en/screens/>. / Para cualquier plugin que necesite su propia pantalla,
+configuración, bienvenida, tablero o panel, constrúyela con las pantallas de Kino y deja el formulario de ajustes viejo
+solo por compatibilidad; para seguir instalándose en un Kino anterior conserva tu `apiVersion` y ofrece la pantalla con
+`enhancements`; pon el código en `src/` y empaquétalo en `plugin.js` con esbuild; revísalo con `validate.mjs` y
+`run.mjs . screen`. Guía y catálogo: <https://kinotvapp.github.io/kino-plugins/screens/>.
+
 - `screen`: a plugin draws its own screens (the `screen` block of `kino-plugin.json`, the `screen` and `screenEvent`
   exports). `node sdk/run.mjs . screen` prints the validated tree; `node sdk/run.mjs . screenEvent <name> [arg] ['<value
   json>'] [--trigger tap|change|submit]` runs the export and prints the validated answer (the first call of a real
