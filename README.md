@@ -245,7 +245,12 @@ the app's rules:
   `{ full, entries, removed?, state? }` (the whole list, or a change); a **live** store (`"pluginStore": { "mode": "live" }`)
   also answers `storeList({ category, sort, cursor })` and `storeSearch({ q, category, cursor })` while the person browses.
   Kino keeps one local index of every store, paints the store from it, applies the owner's blocklist and the 18+ code, and
-  installs through its own consent sheet: a store only hands over addresses. `node sdk/run.mjs <folder> storeSync [--since n]
+  installs through its own consent sheet: a store only hands over addresses. The store view has three tabs, "From Kino"
+  (Kino Plugins' default list), "Community" (everything else from every store; sort, store filter and live stores live
+  here) and "Installed". There is one plugin per id across all stores: when two repos claim an id, the one in Kino Plugins'
+  list wins, otherwise one is kept deterministically, and no store may list the id `kino-plugins`. Be ready for `since` to
+  be absent at any time: when Kino loses a store's rows it syncs that store from scratch, with no `since` and no `state`,
+  and the store must answer its full list. The owner's blocklist is refreshed with every store sync. `node sdk/run.mjs <folder> storeSync [--since n]
   [--state '<json>']`, `storeList [popular|recent] [category]` and `storeSearch "q"` print the answers as Kino's index would
   keep them and say what Kino drops. `node sdk/init.mjs my-store --host store.example.org --store local|live` scaffolds a store.
   Two complete examples (a static JSON list and a store with its own API) are in the guide:
@@ -264,6 +269,12 @@ solo responde a plugins firmados con la llave de autor de Kino; el kit simula un
 `kino.library.watched()` (`season` y `episode` en las series) y `pluginStore` (tu plugin es una fuente de plugins para la tienda
 de Kino: `storeSync`, y `storeList` y `storeSearch` si la tienda es en vivo; `run.mjs <carpeta> storeSync|storeList|storeSearch`;
 `init.mjs mi-tienda --store local|live` arma una tienda). Quien escribe un plugin es responsable de él; Kino solo lo lista.
+La vista de la tienda tiene tres pestañas, «De Kino» (la lista por defecto de Kino Plugins), «De la comunidad» (todo lo demás
+de todas las tiendas, con el orden, el filtro de tiendas y las tiendas en vivo) e «Instalados». Hay un plugin por `id` en todas
+las tiendas: si dos repositorios reclaman un `id`, gana el de la lista de Kino Plugins y, si no, se conserva uno de forma
+determinista; ninguna tienda puede listar el `id` `kino-plugins`. Prepárate para que `since` falte en cualquier momento: si Kino
+pierde las filas de una tienda, la sincroniza desde cero, sin `since` ni `state`, y la tienda responde su lista completa. La lista
+de bloqueo del dueño se refresca con cada sincronización de tiendas.
 La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://kinotvapp.github.io/kino-plugins/identity/>,
 <https://kinotvapp.github.io/kino-plugins/notifications/>.
 
