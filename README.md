@@ -224,13 +224,56 @@ junta en `plugin.js`. La guía: <https://kinotvapp.github.io/kino-plugins/screen
 <https://kinotvapp.github.io/kino-plugins/jobs-and-shared/>, <https://kinotvapp.github.io/kino-plugins/enhancements/>,
 <https://kinotvapp.github.io/kino-plugins/plugin-files/>, <https://kinotvapp.github.io/kino-plugins/structure/>.
 
+## apiVersion 15 (upcoming with the next Kino version) / apiVersion 15 (llega con la próxima versión de Kino)
+
+`apiVersion` 15 is **upcoming with the next Kino version (not published yet)**; every Kino before it refuses it. It brings
+three capabilities, the library's episodes and a new kind of plugin, a store. The kit already checks and runs all of it with
+the app's rules:
+
+- `identity` (declarative, never alone): `kino.identity.telegram({ challenge? })` answers a pseudonym of the person for your
+  plugin (`id`) and the signed token that proves it (`token`); with a `challenge` it also answers a device signature
+  (`deviceKey`, `signature`, `author`, `codeHash`). **Only plugins signed with Kino's own author key get an answer**; any other
+  plugin is refused with `permission_denied`. Allowed only inside a call the person started (a screen, a screen event, a panel
+  action). The kit answers a fake account: `KINO_IDENTITY_TG=<id|none>`, `KINO_IDENTITY_TOKEN`, `KINO_IDENTITY_AUTHOR`,
+  `KINO_IDENTITY_REVOKED=1`. Never log or show the token.
+- `notifications` (declarative, never alone): `kino.notifications.post({ id, title, titleEn?, text?, textEn?, go? })` and
+  `clear(id?)` leave short notices in the Home bell (80-character titles, 160-character texts, 20 posts an hour, 30 kept, 30
+  days; `go` opens your own screen, `go.screen`). From a screen, a screen event or your scheduled job. The kit keeps what you
+  post in `<folder>/.kino-notices.json`: `node sdk/run.mjs <folder> notifications` (`KINO_NOTIFICATIONS_REVOKED=1`: switched off).
+- `library` episodes: `kino.library.watched()` carries `season` and `episode` (the latest watched) on series, never on movies.
+- `pluginStore`: your plugin becomes a **source of plugins** for Kino's store. `storeSync({ reason, since, state })` answers
+  `{ full, entries, removed?, state? }` (the whole list, or a change); a **live** store (`"pluginStore": { "mode": "live" }`)
+  also answers `storeList({ category, sort, cursor })` and `storeSearch({ q, category, cursor })` while the person browses.
+  Kino keeps one local index of every store, paints the store from it, applies the owner's blocklist and the 18+ code, and
+  installs through its own consent sheet: a store only hands over addresses. `node sdk/run.mjs <folder> storeSync [--since n]
+  [--state '<json>']`, `storeList [popular|recent] [category]` and `storeSearch "q"` print the answers as Kino's index would
+  keep them and say what Kino drops. `node sdk/init.mjs my-store --host store.example.org --store local|live` scaffolds a store.
+  Two complete examples (a static JSON list and a store with its own API) are in the guide:
+  <https://kinotvapp.github.io/kino-plugins/en/plugin-stores/>. Authors are responsible for the plugins they list; Kino only
+  lists them.
+
+The guide: <https://kinotvapp.github.io/kino-plugins/en/plugin-stores/>,
+<https://kinotvapp.github.io/kino-plugins/en/identity/>, <https://kinotvapp.github.io/kino-plugins/en/notifications/>.
+
+`apiVersion` 15 **llega con la próxima versión de Kino (todavía sin publicar)**; todo Kino anterior la rechaza. Trae tres
+capacidades, los episodios de la biblioteca y un nuevo tipo de plugin, la tienda. El kit ya las revisa y corre con las reglas
+de la app: `identity` (`kino.identity.telegram`: un seudónimo de la persona para tu plugin y el token firmado que lo prueba;
+solo responde a plugins firmados con la llave de autor de Kino; el kit simula una cuenta con `KINO_IDENTITY_TG`,
+`KINO_IDENTITY_TOKEN`, `KINO_IDENTITY_AUTHOR` y `KINO_IDENTITY_REVOKED`), `notifications` (`kino.notifications.post` y
+`clear`: avisos en la campanita de Inicio; `run.mjs <carpeta> notifications` muestra lo publicado), los episodios de
+`kino.library.watched()` (`season` y `episode` en las series) y `pluginStore` (tu plugin es una fuente de plugins para la tienda
+de Kino: `storeSync`, y `storeList` y `storeSearch` si la tienda es en vivo; `run.mjs <carpeta> storeSync|storeList|storeSearch`;
+`init.mjs mi-tienda --store local|live` arma una tienda). Quien escribe un plugin es responsable de él; Kino solo lo lista.
+La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://kinotvapp.github.io/kino-plugins/identity/>,
+<https://kinotvapp.github.io/kino-plugins/notifications/>.
+
 ## Tests
 
 ```
 node --test sdk/test/*.test.mjs
 ```
 
-Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason.
+Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason. The apiVersion 15 tests (identity, notifications, stores, `init --store`) run here.
 Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
 catalog's shared test vectors: they run in the app's repository. So do the check of the `--bundle` scaffold against the
 guide's bundled example and the user interface reference's tests, which read only that page and its example plugins
