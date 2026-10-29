@@ -120,7 +120,7 @@ The kit already checks and runs all of it with the app's rules:
 The guide: <https://kinotvapp.github.io/kino-plugins/en/bytes/>, <https://kinotvapp.github.io/kino-plugins/en/catalog/>,
 <https://kinotvapp.github.io/kino-plugins/en/images/>, <https://kinotvapp.github.io/kino-plugins/en/qr/>.
 
-`apiVersion` 13 llega en **Kino 0.9.74, la próxima versión, junto con apiVersion 12; todavía no está publicada**, y
+`apiVersion` 13 llegó en **Kino 0.9.74, junto con apiVersion 12**, y
 todo Kino anterior a 0.9.74 rechaza las dos. El kit
 ya revisa y corre todo con las reglas de la app: `kino.ws` (`socket`), `byteSource` (`run.mjs . resolve` acepta el
 stream `{ source: "plugin" }`, `run.mjs --size <bytes> . read <handle> <offset> <length>` y `askRead` llaman tu `read`),
@@ -132,18 +132,6 @@ respuesta de `settingsStatus`, `syncProvider` junto a `socket`, `storageLarge`, 
 image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `kino.crypto` (dependen de la versión de
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
-
-## apiVersion 15 (the next Kino, not published yet) / apiVersion 15 (la próxima versión de Kino, sin publicar)
-
-`apiVersion` 15 is **in the next Kino after 0.9.76 (not published yet)**; a Kino before it refuses it. It adds two declarative
-capabilities that never stand alone, and the kit already runs both: **`identity`** (`kino.identity.telegram()`: a pseudonym id
-of the person for your plugin plus Kino's gate token, and with a `challenge` a device-key signature your server can verify;
-only plugins signed with Kino's own author key get an answer; `KINO_IDENTITY_*` variables in the kit) and **`notifications`**
-(`kino.notifications.post({ id, title, text, go })` / `clear(id?)`: notices in the Home bell, 20 posts an hour; the kit keeps
-them in `<folder>/.kino-notices.json`, `node sdk/run.mjs <folder> notifications`). Full reference: `GUIDE.md` of the example
-plugins, sections `kino.identity` and `kino.notifications`. / `apiVersion` 15 **llega con Kino 0.9.76 (todavía sin
-publicar)**; un Kino anterior lo rechaza. Agrega dos capacidades declarativas que nunca van solas, y el kit ya corre ambas:
-**`identity`** (quién es la persona, sin login) y **`notifications`** (avisos en la campanita de Home).
 
 ## apiVersion 14 (Kino 0.9.74 and later) / apiVersion 14 (Kino 0.9.74 en adelante)
 
