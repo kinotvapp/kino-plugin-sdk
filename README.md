@@ -81,9 +81,9 @@ un bot de Telegram de la persona), <https://github.com/kinotvapp/kino-plugin-syn
 de la persona) y <https://github.com/kinotvapp/kino-plugin-sync-gram-account> (Sync-Gram Cuenta, la propia cuenta de
 Telegram de la persona, apiVersion 13; no está en ningún catálogo: se instala pegando la dirección de su repositorio).
 
-## apiVersion 13 (Kino 0.9.74, not published yet) / apiVersion 13 (Kino 0.9.74, todavía sin publicar)
+## apiVersion 13 (Kino 0.9.74 and later) / apiVersion 13 (Kino 0.9.74 en adelante)
 
-`apiVersion` 13 arrives in **Kino 0.9.74, the next release, together with apiVersion 12; it is not published yet**, and
+`apiVersion` 13 arrives in **Kino 0.9.74, together with apiVersion 12**, and
 every Kino before 0.9.74 refuses both (`validate.mjs` says "needs Kino 0.9.74 or later").
 The kit already checks and runs all of it with the app's rules:
 
@@ -133,9 +133,9 @@ image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
 
-## apiVersion 15 (upcoming with Kino 0.9.76) / apiVersion 15 (llega con Kino 0.9.76)
+## apiVersion 15 (the next Kino, not published yet) / apiVersion 15 (la próxima versión de Kino, sin publicar)
 
-`apiVersion` 15 is **upcoming with Kino 0.9.76 (not published yet)**; a Kino before it refuses it. It adds two declarative
+`apiVersion` 15 is **in the next Kino after 0.9.76 (not published yet)**; a Kino before it refuses it. It adds two declarative
 capabilities that never stand alone, and the kit already runs both: **`identity`** (`kino.identity.telegram()`: a pseudonym id
 of the person for your plugin plus Kino's gate token, and with a `challenge` a device-key signature your server can verify;
 only plugins signed with Kino's own author key get an answer; `KINO_IDENTITY_*` variables in the kit) and **`notifications`**
@@ -145,9 +145,9 @@ plugins, sections `kino.identity` and `kino.notifications`. / `apiVersion` 15 **
 publicar)**; un Kino anterior lo rechaza. Agrega dos capacidades declarativas que nunca van solas, y el kit ya corre ambas:
 **`identity`** (quién es la persona, sin login) y **`notifications`** (avisos en la campanita de Home).
 
-## apiVersion 14 (upcoming with Kino 0.9.74) / apiVersion 14 (llega con Kino 0.9.74)
+## apiVersion 14 (Kino 0.9.74 and later) / apiVersion 14 (Kino 0.9.74 en adelante)
 
-`apiVersion` 14 is **upcoming with Kino 0.9.74 (the next version, not published yet)**, together with apiVersion 12 and
+`apiVersion` 14 **ships in Kino 0.9.74**, together with apiVersion 12 and
 13; every Kino before 0.9.74 refuses it. It brings plugin screens and the capabilities around them. The kit already
 checks and runs all of it with the app's rules:
 
@@ -207,7 +207,7 @@ The guide: <https://kinotvapp.github.io/kino-plugins/en/screens/>,
 <https://kinotvapp.github.io/kino-plugins/en/enhancements/>, <https://kinotvapp.github.io/kino-plugins/en/plugin-files/>,
 <https://kinotvapp.github.io/kino-plugins/en/structure/>.
 
-`apiVersion` 14 **llega con Kino 0.9.74 (la próxima versión, todavía sin publicar)**, junto con apiVersion 12 y 13; todo
+`apiVersion` 14 **llega con Kino 0.9.74**, junto con apiVersion 12 y 13; todo
 Kino anterior a 0.9.74 la rechaza. Trae las pantallas de plugin y las capacidades que las rodean, y el kit ya las revisa
 y corre con las reglas de la app: `run.mjs . screen` imprime el árbol validado y `run.mjs . screenEvent <nombre>` corre
 el evento (`--device tv` para el lado de la TV, `--state '<json>'` y `--context '<json>'` para el estado y el contexto);
