@@ -133,6 +133,18 @@ image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
 
+## apiVersion 15 (upcoming with Kino 0.9.76) / apiVersion 15 (llega con Kino 0.9.76)
+
+`apiVersion` 15 is **upcoming with Kino 0.9.76 (not published yet)**; a Kino before it refuses it. It adds two declarative
+capabilities that never stand alone, and the kit already runs both: **`identity`** (`kino.identity.telegram()`: a pseudonym id
+of the person for your plugin plus Kino's gate token, and with a `challenge` a device-key signature your server can verify;
+only plugins signed with Kino's own author key get an answer; `KINO_IDENTITY_*` variables in the kit) and **`notifications`**
+(`kino.notifications.post({ id, title, text, go })` / `clear(id?)`: notices in the Home bell, 20 posts an hour; the kit keeps
+them in `<folder>/.kino-notices.json`, `node sdk/run.mjs <folder> notifications`). Full reference: `GUIDE.md` of the example
+plugins, sections `kino.identity` and `kino.notifications`. / `apiVersion` 15 **llega con Kino 0.9.76 (todavía sin
+publicar)**; un Kino anterior lo rechaza. Agrega dos capacidades declarativas que nunca van solas, y el kit ya corre ambas:
+**`identity`** (quién es la persona, sin login) y **`notifications`** (avisos en la campanita de Home).
+
 ## apiVersion 14 (upcoming with Kino 0.9.74) / apiVersion 14 (llega con Kino 0.9.74)
 
 `apiVersion` 14 is **upcoming with Kino 0.9.74 (the next version, not published yet)**, together with apiVersion 12 and
