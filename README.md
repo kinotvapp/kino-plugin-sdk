@@ -133,6 +133,73 @@ image <handle>` y `askImage` para `imageSource`, y las operaciones de bytes de `
 Kino, no del `apiVersion` del manifiesto: revisa cada una con `typeof`). `init.mjs --with
 byteSource,images,catalog,socket` arma un plugin de apiVersion 13 con un ejemplo de cada una. La guía: <https://kinotvapp.github.io/kino-plugins/bytes/>.
 
+## apiVersion 14 (upcoming with Kino 0.9.74) / apiVersion 14 (llega con Kino 0.9.74)
+
+`apiVersion` 14 is **upcoming with Kino 0.9.74 (the next version, not published yet)**, together with apiVersion 12 and
+13; every Kino before 0.9.74 refuses it. It brings plugin screens and the capabilities around them. The kit already
+checks and runs all of it with the app's rules:
+
+- `screen`: a plugin draws its own screens (the `screen` block of `kino-plugin.json`, the `screen` and `screenEvent`
+  exports). `node sdk/run.mjs . screen` prints the validated tree; `node sdk/run.mjs . screenEvent <name> [arg] ['<value
+  json>'] [--trigger tap|change|submit]` runs the export and prints the validated answer (the first call of a real
+  session is the reserved event `open`). The fake context is a phone at compact width with an empty state: `--device
+  tv` draws the TV side, `--context '<json>'` merges over the context and `--state '<json>'` over its state. A tap or
+  submit is the person's press; a `change` is not, so its `go.titleByIds` / `go.url` is dropped, as in the app.
+- The player panel in screen mode: `panel` reads a result with `format: "screen"` as the app does; `panelAction` takes
+  `--screen` and a field name. `playerPanelTab` (with `"panel": { "contributes": true }`) adds a tab to another plugin's
+  title: `--foreign <plugin id>[:<name>]` gives the panel the app's foreign context, and `--live-channel
+  <provider>:<code>[:<name>]` an En vivo channel's.
+- `playerControl`: every panel answer's `player` is sifted by its origin and the capability, and `run.mjs` prints what
+  is dropped and the notice Kino shows the person (`KINO_PLAYER_CONTROL_REVOKED=1`: the person switched it off).
+- `schedule` and `jobs`: `node sdk/run.mjs . job [jobId] [scheduled|manual]` runs one background job as Kino does, with
+  the run's caps on `kino.fetch` and `kino.storage` and the forbidden APIs refused with `not_allowed`.
+- `shared`: `kino.shared`, a small store that syncs between the person's devices, simulated on two devices (`phone`,
+  `tv`) kept in `.kino-shared.json`; a run uses `--device` and the two sync when it ends. So `job --device phone` then
+  `screen --device tv` shows what the TV reads; `node sdk/run.mjs . shared` prints what each device holds.
+- `ai`: `kino.ai.ask`, only after the person's press (or inside a job run), through a fake AI: `KINO_AI_REPLY=<text>`
+  (the reply), `KINO_AI_ERROR=<code>` (`unavailable`, `rate_limited`, `too_large`, `timeout`, `refused`),
+  `KINO_AI_REVOKED=1` (switched off).
+- `room`: `kino.room`, an in-memory room with two simulated members, with the app's payload rules and refusals
+  (`KINO_ROOM_REVOKED=1`: switched off).
+- `library`: `kino.library.watched()` and `saved()`, read-only, from `KINO_LIBRARY_FIXTURE=<file.json>` (`[]` without
+  one; `KINO_LIBRARY_REVOKED=1`: switched off).
+- `kino.fetch` options `maxBytes` (stop reading after that many bytes) and `stopAt` (stop once the text holds a
+  marker); the answer says `truncated`.
+- A `toggle` or `select` setting may say `"unlockWith": "adultCode"`: Kino asks the device's 18+ code before the person
+  moves it away from its default. The kit refuses, as the app does, a screen answer's `config` away from the default and
+  a field bound to that setting.
+- `enhancements`: a plugin keeps its own `apiVersion` and lists, under `"enhancements": { "14": { ... } }`, what only a
+  newer Kino reads (`capabilities`, `screen`, `settings`, `panel`). An older Kino ignores the block. `validate.mjs` notes
+  the enhancements Kino applies and reports each one it drops ("Kino ignores this enhancement and runs the plugin as its
+  apiVersion N says"), so the plugin must keep working without them.
+- `node sdk/init.mjs my-plugin --host example.com --bundle` scaffolds a plugin whose source is split into `src/` and
+  bundled into `plugin.js` by `npm run build` (esbuild). `--with` keeps its apiVersion 13 options.
+
+The guide: <https://kinotvapp.github.io/kino-plugins/en/screens/>,
+<https://kinotvapp.github.io/kino-plugins/en/screen-components/>,
+<https://kinotvapp.github.io/kino-plugins/en/screen-forms/>,
+<https://kinotvapp.github.io/kino-plugins/en/screen-reference/>, <https://kinotvapp.github.io/kino-plugins/en/rooms/>,
+<https://kinotvapp.github.io/kino-plugins/en/jobs-and-shared/>,
+<https://kinotvapp.github.io/kino-plugins/en/enhancements/>, <https://kinotvapp.github.io/kino-plugins/en/plugin-files/>,
+<https://kinotvapp.github.io/kino-plugins/en/structure/>.
+
+`apiVersion` 14 **llega con Kino 0.9.74 (la próxima versión, todavía sin publicar)**, junto con apiVersion 12 y 13; todo
+Kino anterior a 0.9.74 la rechaza. Trae las pantallas de plugin y las capacidades que las rodean, y el kit ya las revisa
+y corre con las reglas de la app: `run.mjs . screen` imprime el árbol validado y `run.mjs . screenEvent <nombre>` corre
+el evento (`--device tv` para el lado de la TV, `--state '<json>'` y `--context '<json>'` para el estado y el contexto);
+el panel del reproductor en modo pantalla (`panelAction --screen`), `playerPanelTab` (`--foreign`, `--live-channel`) y
+`playerControl`; `run.mjs . job [id]` corre una tarea en segundo plano con los topes de Kino; `kino.shared` en dos aparatos
+simulados (`--device phone|tv`, `run.mjs . shared`); `kino.ai.ask` con una IA de mentira (`KINO_AI_REPLY`,
+`KINO_AI_ERROR`, `KINO_AI_REVOKED`); `kino.room` en memoria con dos miembros simulados; `kino.library` desde
+`KINO_LIBRARY_FIXTURE`; las opciones `maxBytes` y `stopAt` de `kino.fetch`; `"unlockWith": "adultCode"` en un ajuste
+`toggle` o `select`; y `enhancements`: `validate.mjs` dice cuáles aplica Kino y avisa de cada una que descarta, porque el
+plugin debe seguir funcionando sin ellas. `init.mjs --bundle` arma un plugin con el código en `src/` que `npm run build`
+junta en `plugin.js`. La guía: <https://kinotvapp.github.io/kino-plugins/screens/>,
+<https://kinotvapp.github.io/kino-plugins/screen-components/>, <https://kinotvapp.github.io/kino-plugins/screen-forms/>,
+<https://kinotvapp.github.io/kino-plugins/screen-reference/>, <https://kinotvapp.github.io/kino-plugins/rooms/>,
+<https://kinotvapp.github.io/kino-plugins/jobs-and-shared/>, <https://kinotvapp.github.io/kino-plugins/enhancements/>,
+<https://kinotvapp.github.io/kino-plugins/plugin-files/>, <https://kinotvapp.github.io/kino-plugins/structure/>.
+
 ## Tests
 
 ```
@@ -141,7 +208,9 @@ node --test sdk/test/*.test.mjs
 
 Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason.
 Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
-catalog's shared test vectors: they run in the app's repository.
+catalog's shared test vectors: they run in the app's repository. So do the check of the `--bundle` scaffold against the
+guide's bundled example and the user interface reference's tests, which read only that page and its example plugins
+and are not copied here.
 
 ## Licence / Licencia
 
