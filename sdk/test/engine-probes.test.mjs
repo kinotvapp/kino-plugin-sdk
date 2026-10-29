@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createKino } from "../kino-shim.mjs";
+import { contract } from "../contract.mjs";
 import { loadPlugin } from "../sandbox.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,7 +25,8 @@ const VERSION_DEPENDENT = new Set(["large: nested array depth 5000 JSON"]);
 const KNOWN = JSON.parse(readFileSync(join(here, "engine-probes.known.json"), "utf8"));
 
 test("the kit's sandbox answers the language battery as Kino's engine does, except the known differences", async () => {
-  const { kino } = createKino({ id: "probe", name: "Probe", version: "1.0.0", apiVersion: 11, entry: "plugin.js", hosts: ["example.com"], capabilities: ["search"] });
+  // The newest apiVersion, like the app's probe runtime: every kino.* key that version adds is present.
+  const { kino } = createKino({ id: "probe", name: "Probe", version: "1.0.0", apiVersion: contract.apiVersion, entry: "plugin.js", hosts: ["example.com"], capabilities: ["search"] });
   const { plugin } = await loadPlugin(join(here, "engine-probes.js"), kino);
   const got = JSON.parse(await plugin.home());
   assert.equal(got.length, expected.length, "the battery and the fixture have different sizes: regenerate the fixture");
