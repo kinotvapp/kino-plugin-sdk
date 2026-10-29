@@ -249,7 +249,7 @@ the app's rules:
   [--state '<json>']`, `storeList [popular|recent] [category]` and `storeSearch "q"` print the answers as Kino's index would
   keep them and say what Kino drops. `node sdk/init.mjs my-store --host store.example.org --store local|live` scaffolds a store.
   Two complete examples (a static JSON list and a store with its own API) are in the guide:
-  <https://kinotvapp.github.io/kino-plugins/en/plugin-stores/>. Authors are responsible for the plugins they list; Kino only
+  <https://kinotvapp.github.io/kino-plugins/en/store-examples/>. Authors are responsible for the plugins they list; Kino only
   lists them.
 
 The guide: <https://kinotvapp.github.io/kino-plugins/en/plugin-stores/>,
