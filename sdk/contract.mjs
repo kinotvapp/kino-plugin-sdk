@@ -69,7 +69,7 @@ export function requiredExports(caps, settings = [], manifest = {}) {
     ...(settings.some((s) => s && (s.type === "status" || s.type === "qr")) ? [ui.status] : []),
     ...(settings.some((s) => s && s.type === "action") ? [ui.action] : []),
   ];
-  return [...new Set([...caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])), ...fromSettings, ...(manifest.section ? [contract.manifest.section.export] : []), ...(manifest.panel ? [contract.manifest.panel.exports.panel] : []), ...((manifest.screen?.replaces || []).includes("categories") ? [contract.output.categories.export] : [])])];
+  return [...new Set([...caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])), ...fromSettings, ...(manifest.section ? [contract.manifest.section.export] : []), ...(manifest.panel ? [contract.manifest.panel.exports.panel] : []), ...(manifest.pluginStore?.mode === "live" ? contract.kinoStore.liveExports : []), ...((manifest.screen?.replaces || []).includes("categories") ? [contract.output.categories.export] : [])])];
 }
 
 /** PluginManifest.kt's refusals for the `screen` field (apiVersion 14). */
@@ -861,6 +861,15 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
     if (parsedJobs.message) return bad(caps.includes(contract.kinoJobs.capability) && !has(o, "jobs") ? "capabilities" : "jobs", parsedJobs.message);
     jobs = parsedJobs.jobs;
   }
+  // apiVersion 15, `pluginStore` (ManifestParser.parseStore): the block of the `pluginStore` capability, optional with it, refused without it.
+  const storeCap = contract.kinoStore.capability;
+  let pluginStore;
+  if (!caps.includes(storeCap)) {
+    if (has(o, contract.kinoStore.field)) return bad(contract.kinoStore.field, contract.kinoStore.needsCapabilityMessage);
+  } else {
+    pluginStore = parseStoreBlock(o[contract.kinoStore.field]);
+    if (!pluginStore) return bad(contract.kinoStore.field, contract.kinoStore.badMessage);
+  }
   // Judged on what the app honours: below its apiVersion a field is ignored, so it forbids nothing there.
   if (catalogOnly) {
     const playback = { streamHosts: streamHostsAny, browser: browser && !browserPages };
@@ -872,9 +881,101 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
   const out = { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: settingsOut, insecureHosts, liveStreamHostsAny, streamHostsAny, fetchHostsAny, discoverable, categories, debug, telemetry, browser, browserPages, section, panel, screen, theme, secrets, secretKeyEncodings, catalogOnly };
   // Task 8q: the parsed jobs (labels scrubbed, options sorted); none below apiVersion 14 or without `schedule`.
   if (o.apiVersion >= contract.kinoJobs.apiVersion) out.jobs = jobs; else delete out.jobs;
+  // apiVersion 15: the parsed `pluginStore` block ({ mode, name }); none without the capability.
+  if (pluginStore) out.pluginStore = pluginStore; else delete out.pluginStore;
   // `signature` only where the app reads it (apiVersion 5+): an ignored one is dropped, as the app drops it.
   if (!signed) delete out.signature;
   return { ok: true, manifest: out };
+}
+
+/** The functions of the `pluginStore` capability (contract.kinoStore): storeSync, and a live store's storeList and storeSearch. */
+export const STORE_FUNCTIONS = ["storeSync", "storeList", "storeSearch"];
+
+
+/**
+ * What Kino's index keeps of one `StoreEntry`, or null (with [drop] told why): an entry with no usable `address` and no `stremio`,
+ * no `id` (idPattern) or no `name` goes; texts are cut to the caps, a non-https icon or screenshot is dropped, unknown categories ignored.
+ */
+function storeEntry(e, drop) {
+  const S = contract.kinoStore;
+  const L = S.limits;
+  const address_ok = re(S.addressPattern);
+  if (e === null || typeof e !== "object" || Array.isArray(e)) { drop("an entry is not an object"); return null; }
+  const text = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : undefined);
+  const id = typeof e.id === "string" ? e.id : "";
+  if (!re(S.idPattern).test(id)) { drop(`an entry's id ${JSON.stringify(e.id)} is not 2 to 40 of a-z, 0-9 and -`); return null; }
+  const name = text(e.name, L.maxNameChars);
+  if (!name) { drop(`${id}: no name`); return null; }
+  const stremio = typeof e.stremio === "string" && /^https:\/\/\S+$/.test(e.stremio.trim()) ? e.stremio.trim() : undefined;
+  const address = typeof e.address === "string" && address_ok.test(e.address.trim()) ? e.address.trim() : undefined;
+  if (!address && !stremio) { drop(`${id}: no valid address`); return null; }
+  const https = (v) => (typeof v === "string" && /^https:\/\/\S+$/.test(v.trim()) ? v.trim() : undefined);
+  const strings = (v, max, each) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).slice(0, max).map((x) => x.trim().slice(0, each)) : undefined);
+  const out = { id, name };
+  if (address) out.address = address;
+  if (stremio) out.stremio = stremio;
+  const description = text(e.description, L.maxDescriptionChars); if (description) out.description = description;
+  const longDescription = text(e.longDescription, L.maxLongDescriptionChars); if (longDescription) out.longDescription = longDescription;
+  if (Array.isArray(e.categories)) out.categories = [...new Set(e.categories.filter((c) => S.categories.includes(c)))];
+  const tags = strings(e.tags, L.maxTags, L.maxTagChars); if (tags) out.tags = tags;
+  const icon = https(e.icon); if (icon) out.icon = icon;
+  if (Array.isArray(e.screenshots)) out.screenshots = e.screenshots.map(https).filter(Boolean).slice(0, L.maxScreenshots);
+  const version = text(e.version, L.maxVersionChars); if (version) out.version = version;
+  const author = text(e.author, L.maxAuthorChars); if (author) out.author = author;
+  if (typeof e.popularity === "number" && Number.isFinite(e.popularity)) out.popularity = e.popularity;
+  if (Number.isFinite(e.updatedAt)) out.updatedAt = e.updatedAt;
+  if (typeof e.recommended === "boolean") out.recommended = e.recommended;
+  const requires = strings(e.requires, L.maxRequires, L.maxRequireChars); if (requires) out.requires = requires;
+  if (typeof e.needsSetup === "boolean") out.needsSetup = e.needsSetup;
+  if (typeof e.signed === "boolean") out.signed = e.signed;
+  if (typeof e.authorKey === "string" && re(S.authorKeyPattern).test(e.authorKey.trim())) out.authorKey = e.authorKey.trim();
+  return out;
+}
+
+/** An answer of storeSync / storeList / storeSearch as Kino keeps it (contract.kinoStore); throws when it is not an object with `entries`. */
+function storeAnswer(fn, v, drop) {
+  const S = contract.kinoStore;
+  if (v === null || typeof v !== "object" || Array.isArray(v) || !Array.isArray(v.entries)) throw new Error(`${fn} didn't return { entries: [...] }`);
+  const sync = fn === "storeSync";
+  if (sync && typeof v.full !== "boolean") throw new Error("storeSync didn't return { full: true | false, entries }");
+  const kept = [];
+  const seen = new Set();
+  for (const raw of v.entries) {
+    if (kept.length >= S.limits.maxEntriesPerSync) { drop(`beyond ${S.limits.maxEntriesPerSync} entries dropped`); break; }
+    const e = storeEntry(raw, drop);
+    const key = e && (e.address || e.stremio);
+    if (!e || seen.has(key)) continue;
+    seen.add(key);
+    kept.push(e);
+  }
+  if (!sync) return { entries: kept, ...(typeof v.next === "string" && v.next ? { next: v.next } : {}) };
+  const out = { full: v.full, entries: kept };
+  if (Array.isArray(v.removed)) out.removed = v.removed.filter((a) => typeof a === "string" && re(S.addressPattern).test(a.trim())).map((a) => a.trim());
+  if (v.state !== undefined && v.state !== null) {
+    if (typeof v.state !== "object" || Array.isArray(v.state)) drop("state is not an object (dropped)");
+    else if (Buffer.byteLength(JSON.stringify(v.state), "utf8") > S.limits.maxStateBytes) drop(`state over ${S.limits.maxStateBytes} bytes dropped`);
+    else out.state = v.state;
+  }
+  return out;
+}
+
+/** ManifestParser.parseStore: `{ mode, name }` from a `pluginStore` block (absent: a local store), or null when it is not `{ mode?, name? }` as documented. */
+function parseStoreBlock(raw) {
+  const S = contract.kinoStore;
+  if (raw === undefined) return { mode: S.defaultMode, name: null };
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  let mode = S.defaultMode;
+  if (raw.mode !== undefined) {
+    if (typeof raw.mode !== "string" || !S.modes.includes(raw.mode)) return null;
+    mode = raw.mode;
+  }
+  let name = null;
+  if (raw.name !== undefined) {
+    if (typeof raw.name !== "string") return null;
+    name = raw.name.trim();
+    if (name.length < 1 || name.length > S.limits.maxNameChars) return null;
+  }
+  return { mode, name };
 }
 
 /** What a job label never keeps (PluginJobs.LABEL_SCRUB): control characters, zero-width and bidirectional marks. */
@@ -2979,7 +3080,10 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
   };
   const liveAdult = Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= live().adultApiVersion;
   const json = JSON.stringify(value === undefined ? null : value);
-  if (json.length > o().maxResultChars) throw new Error("plugin answer too large (over 2 million characters)");
+  if (STORE_FUNCTIONS.includes(fn)) {
+    // A store answer is measured in bytes against its own cap (contract.kinoStore.limits.maxSyncBytes), not the 2-million-character one.
+    if (Buffer.byteLength(json, "utf8") > contract.kinoStore.limits.maxSyncBytes) throw new Error(`plugin answer too large (over ${kb(contract.kinoStore.limits.maxSyncBytes)})`);
+  } else if (json.length > o().maxResultChars) throw new Error("plugin answer too large (over 2 million characters)");
   const parsed = JSON.parse(json);
   switch (fn) {
     case "search": return { value: page(parsed, o().maxSearchItems, ctx, drop), drops };
@@ -3012,6 +3116,8 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
     case "guide": return { value: guide(parsed, drop), drops };
     case "migrate": return migrateAnswer(parsed, migrateInput || { kind: "title" }, ctx.allowAudio);
     case "subtitles": return { value: subtitleTracks(parsed, { manifest, servers }, drop), drops };
+    // apiVersion 15's pluginStore: what Kino keeps of a store's answer (caps, texts, entries without an address, id or name dropped).
+    case "storeSync": case "storeList": case "storeSearch": return { value: storeAnswer(fn, parsed, drop), drops };
     // Kino only needs track() to return (anything, `{ ok: true }` by convention) or throw: a kino.error code says whether to retry.
     case "track": return { value: parsed, drops };
     // apiVersion 7's segments: what the app's Segments.parse keeps, judged against the query's durationMs.

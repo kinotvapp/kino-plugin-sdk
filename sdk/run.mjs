@@ -21,6 +21,10 @@
 //   node sdk/run.mjs <plugin dir> live guide <id,id>
 //   node sdk/run.mjs <plugin dir> live search <query>     (the optional liveSearch export)
 //   node sdk/run.mjs live playlist <url|file> [--epg <url|file>]   (any M3U list, no plugin needed)
+// A plugin store (apiVersion 15, the "pluginStore" capability; the answers are checked as Kino's index keeps them):
+//   node sdk/run.mjs <plugin dir> storeSync [--since <ms>] [--state '<json>']   (every store)
+//   node sdk/run.mjs <plugin dir> storeList [popular|recent] [category]         (a live store: "pluginStore": { "mode": "live" })
+//   node sdk/run.mjs <plugin dir> storeSearch "<q>" [category]                  (a live store)
 // Your own section, categories and colors (apiVersion 6; no capability, the manifest decides):
 //   node sdk/run.mjs <plugin dir> section [tab]     needs "section" in the manifest
 //   node sdk/run.mjs <plugin dir> categories        needs apiVersion 6 and the browse capability
@@ -121,7 +125,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, contract, featureApiVersion, liveChannelGoOf, liveChannelGoRefusal, markSearchHits, maskSetPasswords, readRangeProblem, segmentSkip, validateManifest } from "./contract.mjs";
+import { checkOutput, checkSettingsOutput, contract, featureApiVersion, liveChannelGoOf, liveChannelGoRefusal, markSearchHits, maskSetPasswords, readRangeProblem, segmentSkip, STORE_FUNCTIONS, validateManifest } from "./contract.mjs";
 import { contrast, formatRatio, resolvePalette } from "./palette.mjs";
 import { askImage, askRead, createKino, errorReport, signingLane } from "./kino-shim.mjs";
 import { loadPlugin, missingGlobalLines, scanMissingGlobals } from "./sandbox.mjs";
@@ -168,6 +172,7 @@ const USAGE = "usage: node sdk/run.mjs [--config k=v] [--record f | --replay f] 
   + "       node sdk/run.mjs [--out <file>] <plugin folder> image <handle>   (imageSource: the picture, written to a file)\n"
   + "       node sdk/run.mjs [--context '<json>'] <plugin folder> job [jobId] [scheduled|manual]   (schedule: one background run, with Kino's caps)\n"
   + "       node sdk/run.mjs <plugin folder> shared   (kino.shared: what the simulated phone and tv hold)\n"
+  + "       node sdk/run.mjs [--since <ms>] [--state '<json>'] <plugin folder> <storeSync | storeList [popular|recent] [category] | storeSearch <q> [category]>   (pluginStore: a store's answers, as Kino's index keeps them)\n"
   + "       node sdk/run.mjs live playlist <url|file> [--epg <url|file>]\n"
   + "       env: KINO_META_FIXTURE=<json> (kino.meta), KINO_TMDB_KEY=<your TMDB key> or KINO_TMDB_FIXTURE=<json> (kino.tmdb), KINO_NUVIO_FIXTURE=<json> (kino.nuvio)";
 const here = dirname(fileURLToPath(import.meta.url));
@@ -281,6 +286,11 @@ export function parseArgs(argv) {
       if (c === null || typeof c !== "object" || Array.isArray(c)) throw new Error("--state needs a JSON object");
       opts.state = c;
     }
+    else if (a === "--since") {
+      const n = Number(argv[++i]);
+      if (!Number.isFinite(n) || n < 0) throw new Error("--since needs when the store last synced, in milliseconds since 1970");
+      opts.since = n;
+    }
     else if (a === "--epg") opts.epg = argv[++i];
     else if (a === "--live") opts.live = true;
     else if (a === contract.kinoDevice.kitFlag) {
@@ -329,7 +339,7 @@ async function main() {
   if (fn === contract.kinoJobs.export) return jobCommand(targetArg, rest, opts);
   if (fn === "shared") return sharedCommand(targetArg);
   if (fn === "notifications") return notificationsCommand(targetArg);
-  if (!targetArg || !(FUNCTIONS.includes(fn) || SETTINGS_FUNCTIONS.includes(fn) || PANEL_FUNCTIONS.includes(fn) || SCREEN_FUNCTIONS.includes(fn) || fn === "sign" || fn === "theme" || Object.values(LIVE).includes(fn))) return fail(USAGE);
+  if (!targetArg || !(FUNCTIONS.includes(fn) || SETTINGS_FUNCTIONS.includes(fn) || PANEL_FUNCTIONS.includes(fn) || SCREEN_FUNCTIONS.includes(fn) || STORE_FUNCTIONS.includes(fn) || fn === "sign" || fn === "theme" || Object.values(LIVE).includes(fn))) return fail(USAGE);
   if (opts.record && opts.replay) return fail("--record and --replay can't be used together");
   const target = resolve(targetArg);
   let stat;
@@ -359,7 +369,8 @@ async function main() {
   // A screen declared through an apiVersion 14 enhancement counts (featureApiVersion): only an older Kino skips it.
   if (SCREEN_FUNCTIONS.includes(fn) && !(featureApiVersion(manifest) >= contract.manifest.screen.apiVersion && manifest.screen)) return fail(`the manifest does not declare "screen" (apiVersion ${contract.manifest.screen.apiVersion}, or an "enhancements" block for it, and the "screen" capability with its "screen" block): Kino shows no screen for this plugin`);
   if (fn === "categories" && !(manifest.apiVersion >= contract.output.categories.apiVersion && manifest.capabilities.includes("browse"))) return fail("categories needs apiVersion 6 and the browse capability");
-  const capability = Object.values(LIVE).includes(fn) ? "channels" : fn === "sign" ? "resolve" : fn === contract.tracking.export ? contract.tracking.capability : fn;
+  if ((fn === "storeList" || fn === "storeSearch") && manifest.pluginStore?.mode !== "live") return fail(`${fn} is for a live store: declare "pluginStore": { "mode": "live" } in kino-plugin.json`);
+  const capability = Object.values(LIVE).includes(fn) ? "channels" : STORE_FUNCTIONS.includes(fn) ? contract.kinoStore.capability : fn === "sign" ? "resolve" : fn === contract.tracking.export ? contract.tracking.capability : fn;
   // `subtitles` may be exported by any plugin without the capability (Kino asks whoever exports it).
   const anyPlugin = contract.capabilities.anyPluginExports.includes(fn);
   if (fn === "meta" && !manifest.capabilities.includes("meta")) return fail(NO_META_CAPABILITY);
@@ -1279,6 +1290,14 @@ export async function call(plugin, fn, rest, opts = {}) {
   if (fn === "track") return plugin.track(trackArg(rest));
   if (fn === "segments") return plugin.segments(segmentsArg(rest));
   if (fn === "meta") return callMeta(plugin, metaArg(rest));
+  // apiVersion 15's pluginStore: the arguments the app's store sync and live calls send.
+  if (fn === "storeSync") return plugin.storeSync({ reason: "reload", ...(opts.since !== undefined ? { since: opts.since } : {}), ...(opts.state ? { state: opts.state } : {}) });
+  if (fn === "storeList") {
+    const sort = rest[0] === undefined ? contract.kinoStore.sorts[0] : rest[0];
+    if (!contract.kinoStore.sorts.includes(sort)) throw new Error(`storeList takes ${contract.kinoStore.sorts.join(" or ")}`);
+    return plugin.storeList({ sort, ...(rest[1] !== undefined ? { category: rest[1] } : {}) });
+  }
+  if (fn === "storeSearch") return plugin.storeSearch({ q: arg, ...(rest[1] !== undefined ? { category: rest[1] } : {}) });
   if (fn === "guide") {
     const from = Date.now() - 2 * 3600 * 1000;
     return plugin.guide({ channelIds: arg ? arg.split(",") : [], from, to: from + contract.live.maxGuideWindowMs });

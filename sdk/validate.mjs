@@ -81,6 +81,11 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes(contract.kinoIdentity.capability)) line(contract.kinoIdentity.consentLine.es, true);
   // apiVersion 15 "notifications" (PluginConsent.extraLines): notices in the Home bell: a plain line, not red.
   if (m.capabilities.includes(contract.kinoNotifications.capability)) line(contract.kinoNotifications.consentLine.es);
+  // apiVersion 15 "pluginStore" (PluginConsent.extraLines): a plain line, and a red one for a live store (searches reach its servers).
+  if (m.capabilities.includes(contract.kinoStore.capability)) {
+    line(contract.kinoStore.consentLine.es);
+    if (m.pluginStore?.mode === "live") line(contract.kinoStore.consentLineLive.es, true);
+  }
   // apiVersion 14 "shared" (PluginConsent.extraLines, Task 8q-2): the person's own data between their own devices: a plain line.
   if (m.capabilities.includes(contract.kinoShared.capability)) line(contract.kinoShared.consentLine.es);
   // apiVersion 7 "segments": a plain line, not red (it only learns which title plays): PluginConsent / Segments.CONSENT_LINE.

@@ -1,4 +1,4 @@
-// TypeScript declarations for Kino plugins (apiVersion 1 to 14; 14 adds the screen capability (screen, screenEvent and the manifest's screen block: a full-screen canvas the plugin builds), library, playerPanelTab, playerControl, room (kino.room, a mailbox hosted on the person's device over the Internet), schedule (background jobs: the manifest's jobs and the job export) and the manifest's enhancements; 13 adds the socket capability (kino.ws, outbound WebSockets) and the byteSource capability (a stream whose bytes the plugin serves through its read export) and the storageLarge capability (a 16 MiB kino.storage for a plugin that keeps a catalog) and the catalog capability (kino.catalog, a searchable SQLite catalog of up to 100,000 items per plugin in a 64 MiB file) and the qrScan capability (kino.qr.scan, the phone's camera scanner for a QR code) and the settings form's qr setting (a QR whose text settingsStatus gives, refreshed every refreshMs) and the kino.crypto operations aesIge, modPow, gunzip, convert and aesIgeVerify and the imageSource capability (a poster, backdrop, still or hero image the plugin serves through its image export, KinoImageRef); 12 adds the syncProvider capability (syncPull, syncPush, syncStatus and the manifest's sync block); 11 adds the externalResolve capability (a stream's `external` hand-off to a resolver app, the manifest's externalResolver) and, from Kino 0.9.66, a stream's advisory `media` and its `portable` universal copy; 10 adds the playlists capability; 9 adds the player panel (panel, panelAction, playerEvent, the manifest's panel and settingsLayout), fetchHosts "any" for hand-written plugins, English setting texts and kino.meta by title; 8 adds the audio item kinds music and podcast; 7 adds tracking and segments; apiVersion 5 only adds the manifest's signature, 6 the plain-plugin SDK: typed and larger secrets, migrate, signed streams, the settings form, debug, telemetry, section, categories, theme and scopedSearch). Reference them from plugin.js
+// TypeScript declarations for Kino plugins (apiVersion 1 to 15; 15 adds the identity capability (kino.identity.telegram: a per-plugin pseudonym of the person and the signed token that proves it), the notifications capability (kino.notifications: notices in the Home bell), library episodes (the latest season and episode of a watched series) and the pluginStore capability (the plugin is a source of plugins for Kino's store: storeSync, and storeList and storeSearch for a live store); 14 adds the screen capability (screen, screenEvent and the manifest's screen block: a full-screen canvas the plugin builds), library, playerPanelTab, playerControl, room (kino.room, a mailbox hosted on the person's device over the Internet), schedule (background jobs: the manifest's jobs and the job export) and the manifest's enhancements; 13 adds the socket capability (kino.ws, outbound WebSockets) and the byteSource capability (a stream whose bytes the plugin serves through its read export) and the storageLarge capability (a 16 MiB kino.storage for a plugin that keeps a catalog) and the catalog capability (kino.catalog, a searchable SQLite catalog of up to 100,000 items per plugin in a 64 MiB file) and the qrScan capability (kino.qr.scan, the phone's camera scanner for a QR code) and the settings form's qr setting (a QR whose text settingsStatus gives, refreshed every refreshMs) and the kino.crypto operations aesIge, modPow, gunzip, convert and aesIgeVerify and the imageSource capability (a poster, backdrop, still or hero image the plugin serves through its image export, KinoImageRef); 12 adds the syncProvider capability (syncPull, syncPush, syncStatus and the manifest's sync block); 11 adds the externalResolve capability (a stream's `external` hand-off to a resolver app, the manifest's externalResolver) and, from Kino 0.9.66, a stream's advisory `media` and its `portable` universal copy; 10 adds the playlists capability; 9 adds the player panel (panel, panelAction, playerEvent, the manifest's panel and settingsLayout), fetchHosts "any" for hand-written plugins, English setting texts and kino.meta by title; 8 adds the audio item kinds music and podcast; 7 adds tracking and segments; apiVersion 5 only adds the manifest's signature, 6 the plain-plugin SDK: typed and larger secrets, migrate, signed streams, the settings form, debug, telemetry, section, categories, theme and scopedSearch). Reference them from plugin.js
 // with `/// <reference path="./kino.d.ts" />` for editor help; Kino itself runs plain JavaScript.
 // The numbers in the comments come from contract.json, which is authoritative. The app checks that
 // every `kino` member declared here exists in its runtime and nothing else does (KinoDtsTest).
@@ -2488,6 +2488,84 @@ interface KinoNotice {
    * `{ titleByIds: {...} }`, which open your screen's root for now). Anything else is dropped: the tap opens your screen.
    */
   go?: { screen: { route?: string; args?: Record<string, unknown> } } | { title: { ref: string; kind: string; id?: string; title?: string } } | { titleByIds: KinoScreenTitleByIds };
+}
+
+/**
+ * One plugin a store offers (apiVersion 15, capability "pluginStore"). Kino keeps what fits the caps (contract.json `kinoStore`),
+ * paints it with its own cards and re-checks everything at install. An entry with no `address` and no `stremio`, no valid `id`
+ * or no `name` is dropped.
+ */
+interface StoreEntry {
+  /** `owner/repo[/path][@ref]` or `url:https://.../kino-plugin.json`. Absent only for a `stremio` entry. */
+  address?: string;
+  /** The plugin's id (`^[a-z0-9][a-z0-9-]{1,39}$`). */
+  id: string;
+  /** 1 to 60 characters. */
+  name: string;
+  /** At most 300 characters. */
+  description?: string;
+  /** At most 4000 characters. */
+  longDescription?: string;
+  /** Any of `movies`, `series`, `anime`, `live`, `radio`, `subtitles`, `utilities`, `adult`. */
+  categories?: string[];
+  tags?: string[];
+  /** An https URL. */
+  icon?: string;
+  /** Https URLs. */
+  screenshots?: string[];
+  version?: string;
+  author?: string;
+  /** Higher is more popular: the "popular" sort. */
+  popularity?: number;
+  /** When it last changed, in milliseconds since 1970: the "recent" sort. */
+  updatedAt?: number;
+  /** Honoured only from Kino's own built-in store; ignored from any other. */
+  recommended?: boolean;
+  /** A Stremio manifest URL, installed through Kino's Stremio flow (then `address` may be absent). */
+  stremio?: string;
+  /** Capabilities the plugin needs: Kino hides an entry this build cannot run. */
+  requires?: string[];
+  needsSetup?: boolean;
+  /** A hint that the plugin is signed by its author (the card says "Firmado"); Kino re-checks at install. */
+  signed?: boolean;
+  /** A hint of the author key that signs it (64 lowercase hex); display only. */
+  authorKey?: string;
+}
+
+/** `storeSync(arg)`: the argument (apiVersion 15, capability "pluginStore"). */
+interface StoreSyncArg {
+  /** `"schedule"`: the background refresh at the person's interval. `"reload"`: the person pressed reload. */
+  reason: "schedule" | "reload";
+  /** When this store last synced successfully, in milliseconds since 1970 (absent on the first sync). */
+  since?: number;
+  /** What you returned as `state` last time. */
+  state?: Record<string, unknown>;
+}
+
+/** `storeSync(arg)`: the answer. */
+interface StoreSyncAnswer {
+  /** `true`: `entries` is the store's whole list and anything missing is removed. `false`: upserts, plus `removed`. */
+  full: boolean;
+  /** At most 5000 kept; the whole answer at most 4 MB of JSON. */
+  entries: StoreEntry[];
+  /** With `full: false`, the addresses that left the store. */
+  removed?: string[];
+  /** A small object (at most 16 KB of JSON) Kino keeps for you and hands back next time: a cursor, an etag, a date. */
+  state?: Record<string, unknown>;
+}
+
+/** `storeList(arg)` of a live store (`"pluginStore": { "mode": "live" }`). */
+interface StoreListArg {
+  category?: string;
+  sort: "popular" | "recent";
+  cursor?: string;
+}
+
+/** `storeSearch(arg)` of a live store. Both live calls answer `{ entries, next? }` within 5 s, at most 20 a minute. */
+interface StoreSearchArg {
+  q: string;
+  category?: string;
+  cursor?: string;
 }
 
 /** `kino.identity.telegram(options?)` (apiVersion 15). */

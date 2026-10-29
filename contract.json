@@ -8,19 +8,19 @@
     "kino.library.episode": "TBD" },
   "capabilities": {
     "$comment": "standaloneSupplements (apiVersion 13; room, schedule, ai and shared from apiVersion 14): a capabilities set with at least one standalone capability and nothing else but these runtime capabilities (all declarative but schedule, which exports job) is still standalone (needs neither required nor atLeastOneOf). Alone, with no standalone capability, they get the usual rule. playerControl (Task 8t) is a supplement only beside a panel object (its own player panel, or panel.contributes with playerPanelTab): a standalone set with playerControl and no panel is refused with playerControlNeedsPanelMessage.",
-    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles", "tracking", "segments", "playlists", "externalResolve", "nuvio", "syncProvider", "socket", "byteSource", "storageLarge", "catalog", "qrScan", "imageSource", "screen", "library", "playerPanelTab", "playerControl", "room", "schedule", "ai", "shared", "identity", "notifications"],
+    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles", "tracking", "segments", "playlists", "externalResolve", "nuvio", "syncProvider", "socket", "byteSource", "storageLarge", "catalog", "qrScan", "imageSource", "screen", "library", "playerPanelTab", "playerControl", "room", "schedule", "ai", "shared", "identity", "notifications", "pluginStore"],
     "required": ["resolve"],
     "atLeastOneOf": ["search", "home"],
-    "standalone": ["subtitles", "tracking", "segments", "syncProvider", "screen", "library", "playerPanelTab"],
+    "standalone": ["subtitles", "tracking", "segments", "syncProvider", "screen", "library", "playerPanelTab", "pluginStore"],
     "standaloneSupplements": ["socket", "storageLarge", "catalog", "qrScan", "room", "schedule", "ai", "shared", "playerControl", "identity", "notifications"],
     "playerControlNeedsPanelMessage": "The \"playerControl\" capability needs a \"panel\" (its own player panel, or \"panel\": { \"contributes\": true }) in a plugin that plays nothing",
     "anyPluginExports": ["subtitles"],
     "declarative": ["download", "drm", "scopedSearch", "externalResolve", "nuvio", "socket", "storageLarge", "catalog", "qrScan", "library", "playerControl", "room", "ai", "shared", "identity", "notifications"],
-    "apiVersions": { "download": 2, "drm": 2, "channels": 3, "migrate": 6, "scopedSearch": 6, "meta": 6, "tracking": 7, "segments": 7, "playlists": 10, "externalResolve": 11, "nuvio": 11, "syncProvider": 12, "socket": 13, "byteSource": 13, "storageLarge": 13, "catalog": 13, "qrScan": 13, "imageSource": 13, "screen": 14, "library": 14, "playerPanelTab": 14, "playerControl": 14, "room": 14, "schedule": 14, "ai": 14, "shared": 14, "identity": 15, "notifications": 15 },
+    "apiVersions": { "download": 2, "drm": 2, "channels": 3, "migrate": 6, "scopedSearch": 6, "meta": 6, "tracking": 7, "segments": 7, "playlists": 10, "externalResolve": 11, "nuvio": 11, "syncProvider": 12, "socket": 13, "byteSource": 13, "storageLarge": 13, "catalog": 13, "qrScan": 13, "imageSource": 13, "screen": 14, "library": 14, "playerPanelTab": 14, "playerControl": 14, "room": 14, "schedule": 14, "ai": 14, "shared": 14, "identity": 15, "notifications": 15, "pluginStore": 15 },
     "requires": { "scopedSearch": "search" },
     "requiresMessage": "The \"{capability}\" capability also needs \"{requires}\"",
-    "needsApproval": ["download", "drm", "channels", "migrate", "tracking", "nuvio", "syncProvider", "library", "playerPanelTab", "playerControl", "room", "schedule", "ai", "identity", "notifications"],
-    "exports": { "channels": ["liveCategories", "liveChannels"], "tracking": ["track"], "playlists": [], "syncProvider": ["syncPull", "syncPush"], "byteSource": ["read"], "imageSource": ["image"], "screen": ["screen", "screenEvent"], "playerPanelTab": ["panel"], "schedule": ["job"] },
+    "needsApproval": ["download", "drm", "channels", "migrate", "tracking", "nuvio", "syncProvider", "library", "playerPanelTab", "playerControl", "room", "schedule", "ai", "identity", "notifications", "pluginStore"],
+    "exports": { "channels": ["liveCategories", "liveChannels"], "tracking": ["track"], "playlists": [], "syncProvider": ["syncPull", "syncPush"], "byteSource": ["read"], "imageSource": ["image"], "screen": ["screen", "screenEvent"], "playerPanelTab": ["panel"], "schedule": ["job"], "pluginStore": ["storeSync"] },
     "optionalExports": { "channels": ["guide", "liveSearch"], "resolve": ["sign"], "playlists": ["playlists", "playlistItems", "playlistCreate", "playlistAddItem", "playlistRemoveItem", "playlistReorder"], "syncProvider": ["syncStatus"] }
   },
   "manifest": {
@@ -856,6 +856,43 @@
     "switchLabel": {
       "es": "Mostrar sus avisos en la campanita",
       "en": "Show its notices in the bell"
+    }
+  },
+  "kinoStore": {
+    "$comment": "apiVersion 15, capability \"pluginStore\" (plugin stores), not declarative (it exports storeSync), may be declared alone (standalone), not enhanceable, needsApproval. The plugin is a SOURCE of plugins for Kino's store: Kino paints the store from one local index (cards, search, categories, pagination, the owner's blocklist, install) and the plugin only hands over entries; it is never asked anything while the person browses unless it is a live store. The manifest block \"pluginStore\": { \"mode\"?: \"local\" | \"live\", \"name\"?: 1 to maxNameChars characters } is optional (the capability alone is a local store, mode local); the block without the capability is refused. Every store exports storeSync({ reason: \"schedule\" | \"reload\", since?: number (ms, when this store last synced), state?: object }) -> { full: boolean, entries: StoreEntry[], removed?: address[], state?: object }: full true means entries is the whole list (Kino replaces the store's rows), false means upserts plus removed (the addresses that left); state (at most maxStateBytes of JSON) is handed back on the next call. A live store (mode \"live\") also exports storeList({ category?, sort: \"popular\" | \"recent\", cursor? }) -> { entries, next?: cursor } and storeSearch({ q, category?, cursor? }) -> { entries, next?: cursor }, answered while the person browses, at most liveTimeoutMs per call and livePerMinute calls a minute (past either the call adds nothing), cached by Kino for liveCacheTtlMs. storeSync runs in the background at the person's interval and on reload, at most syncTimeoutMs and syncMaxRequests kino.fetch requests (not the scheduled job's budget). An answer over maxSyncBytes of JSON is refused; entries beyond maxEntriesPerSync are dropped; an entry with no address and no stremio, no id (idPattern) or no name is dropped; texts are cut to the limits. StoreEntry fields (entryFields): address (owner/repo[/path][@ref] or url:https://.../kino-plugin.json), id, name, description, longDescription, categories (MarketCategory ids), tags, icon (https URL), screenshots (https URLs), version, author, popularity (number), updatedAt (ms), recommended (honoured only from Kino Plugins), stremio (a Stremio manifest URL; then address may be absent), requires (capabilities), needsSetup, signed (a hint that its author signs it: the card says Firmado), authorKey (a hint of that author key, 64 lowercase hex, authorKeyPattern: an installed plugin of the same id pinned to it reads as installed). Hints only: Kino re-checks everything at install. Approval: consentLine as a plain line at install and on the update that adds it, and consentLineLive in red for a live store. The kit checks the answers like this and prints them: node sdk/run.mjs <folder> storeSync [--since n] / storeList [popular|recent] [category] / storeSearch \"q\".",
+    "capability": "pluginStore",
+    "apiVersion": 15,
+    "field": "pluginStore",
+    "modes": ["local", "live"],
+    "defaultMode": "local",
+    "exports": ["storeSync"],
+    "liveExports": ["storeList", "storeSearch"],
+    "syncReasons": ["schedule", "reload"],
+    "sorts": ["popular", "recent"],
+    "answerFields": { "storeSync": ["full", "entries", "removed", "state"], "live": ["entries", "next"] },
+    "entryFields": ["address", "id", "name", "description", "longDescription", "categories", "tags", "icon", "screenshots", "version", "author", "popularity", "updatedAt", "recommended", "stremio", "requires", "needsSetup", "signed", "authorKey"],
+    "authorKeyPattern": "^[0-9a-f]{64}$",
+    "idPattern": "^[a-z0-9][a-z0-9-]{1,39}$",
+    "addressPattern": "^(?:url:https://[^\\s/]+/\\S*kino-plugin\\.json|[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}(?:/(?!\\.{1,2}(?:/|@|$))[A-Za-z0-9._-]+)*(?:@[A-Za-z0-9._/-]+)?)$",
+    "categories": ["movies", "series", "anime", "live", "radio", "subtitles", "utilities", "adult"],
+    "keepRule": "At most maxEntriesPerSync entries are kept, counting only the valid ones: an invalid entry never uses a slot, and the first maxEntriesPerSync valid ones (a repeat of an address already kept is skipped, not counted) win.",
+    "needsCapabilityMessage": "The \"pluginStore\" field needs the \"pluginStore\" capability",
+    "badMessage": "The \"pluginStore\" field must be an object: { \"mode\": \"local\" or \"live\", \"name\": 1 to 60 characters }",
+    "limits": {
+      "maxEntriesPerSync": 5000, "maxSyncBytes": 4194304, "maxStateBytes": 16384,
+      "liveTimeoutMs": 5000, "livePerMinute": 20, "liveCacheTtlMs": 1800000,
+      "syncTimeoutMs": 60000, "syncMaxRequests": 40, "syncMaxDownloadBytes": 8388608,
+      "maxNameChars": 60, "maxDescriptionChars": 300, "maxLongDescriptionChars": 4000,
+      "maxTags": 10, "maxTagChars": 30, "maxScreenshots": 8, "maxVersionChars": 40, "maxAuthorChars": 60,
+      "maxRequires": 20, "maxRequireChars": 40
+    },
+    "consentLine": {
+      "es": "Agrega plugins de sus servidores a tu tienda",
+      "en": "Adds plugins from its servers to your store"
+    },
+    "consentLineLive": {
+      "es": "Lo que busques en la tienda llegará a sus servidores",
+      "en": "What you search in the store will reach its servers"
     }
   },
   "kinoShared": {
