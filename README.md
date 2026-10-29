@@ -224,9 +224,9 @@ junta en `plugin.js`. La guía: <https://kinotvapp.github.io/kino-plugins/screen
 <https://kinotvapp.github.io/kino-plugins/jobs-and-shared/>, <https://kinotvapp.github.io/kino-plugins/enhancements/>,
 <https://kinotvapp.github.io/kino-plugins/plugin-files/>, <https://kinotvapp.github.io/kino-plugins/structure/>.
 
-## apiVersion 15 (upcoming with the next Kino version) / apiVersion 15 (llega con la próxima versión de Kino)
+## apiVersion 15 (Kino 0.9.77) / apiVersion 15 (Kino 0.9.77)
 
-`apiVersion` 15 is **upcoming with the next Kino version (not published yet)**; every Kino before it refuses it. It brings
+`apiVersion` 15 arrives in **Kino 0.9.77**; every Kino before it refuses it. It brings
 three capabilities, the library's episodes and a new kind of plugin, a store. The kit already checks and runs all of it with
 the app's rules:
 
@@ -260,7 +260,7 @@ the app's rules:
 The guide: <https://kinotvapp.github.io/kino-plugins/en/plugin-stores/>,
 <https://kinotvapp.github.io/kino-plugins/en/identity/>, <https://kinotvapp.github.io/kino-plugins/en/notifications/>.
 
-`apiVersion` 15 **llega con la próxima versión de Kino (todavía sin publicar)**; todo Kino anterior la rechaza. Trae tres
+`apiVersion` 15 **llega con Kino 0.9.77**; todo Kino anterior la rechaza. Trae tres
 capacidades, los episodios de la biblioteca y un nuevo tipo de plugin, la tienda. El kit ya las revisa y corre con las reglas
 de la app: `identity` (`kino.identity.telegram`: un seudónimo de la persona para tu plugin y el token firmado que lo prueba;
 solo responde a plugins firmados con la llave de autor de Kino; el kit simula una cuenta con `KINO_IDENTITY_TG`,

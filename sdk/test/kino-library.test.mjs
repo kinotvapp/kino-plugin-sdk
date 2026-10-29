@@ -147,7 +147,7 @@ test("the kit refuses reads from exports outside fromFunctions, as the app does"
 });
 
 test("watched series carry the latest season and episode, movies never (contract additiveFromApp kino.library.episode)", async () => {
-  assert.equal(contract.additiveFromApp["kino.library.episode"], "TBD");
+  assert.equal(contract.additiveFromApp["kino.library.episode"], "0.9.77");
   assert.ok(L.answerFields.includes("season") && L.answerFields.includes("episode"));
   const fixture = {
     watched: [
