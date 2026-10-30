@@ -88,3 +88,25 @@ test("run.mjs storeList and storeSearch only exist on a live store", () => {
     assert.equal(JSON.parse(s.stdout).entries[0].name, "anime");
   } finally { rmSync(live, { recursive: true, force: true }); }
 });
+
+test("run.mjs storeList keeps at most a live page's cap and only public https icons", () => {
+  const S = contract.kinoStore;
+  const live = folder(`export async function storeSync(){ return { full: false, entries: [] }; }
+    export async function storeList(){
+      const entries = [{ address: "o/lan", id: "lan", name: "L", icon: "https://192.168.1.4/i.png", screenshots: ["https://nas/s.png", "https://cdn.example.com/s.png"] }, { address: "o/pub", id: "pub", name: "P", icon: "https://cdn.example.com/i.png" }];
+      while (entries.length < ${S.limits.maxEntriesPerLivePage + 10}) entries.push({ address: "o/r" + entries.length, id: "r" + entries.length, name: "R" });
+      return { entries };
+    }
+    export async function storeSearch(){ return { entries: [] }; }`, { pluginStore: { mode: "live" } });
+  try {
+    const r = run(live, "storeList");
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.entries.length, S.limits.maxEntriesPerLivePage);
+    const lan = out.entries.find((e) => e.id === "lan");
+    assert.equal(lan.icon, undefined);
+    assert.deepEqual(lan.screenshots, ["https://cdn.example.com/s.png"]);
+    assert.equal(out.entries.find((e) => e.id === "pub").icon, "https://cdn.example.com/i.png");
+    assert.match(r.stderr, /dropped/);
+  } finally { rmSync(live, { recursive: true, force: true }); }
+});

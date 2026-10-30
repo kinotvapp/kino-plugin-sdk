@@ -894,7 +894,8 @@ export const STORE_FUNCTIONS = ["storeSync", "storeList", "storeSearch"];
 
 /**
  * What Kino's index keeps of one `StoreEntry`, or null (with [drop] told why): an entry with no usable `address` and no `stremio`,
- * no `id` (idPattern) or no `name` goes; texts are cut to the caps, a non-https icon or screenshot is dropped, unknown categories ignored.
+ * no `id` (idPattern) or no `name` goes; texts are cut to the caps, an icon or screenshot that is not https on a public host (no IP
+ * literal, `localhost`, single-label or private-suffix name) is dropped, unknown categories ignored.
  */
 function storeEntry(e, drop) {
   const S = contract.kinoStore;
@@ -909,7 +910,13 @@ function storeEntry(e, drop) {
   const stremio = typeof e.stremio === "string" && /^https:\/\/\S+$/.test(e.stremio.trim()) ? e.stremio.trim() : undefined;
   const address = typeof e.address === "string" && address_ok.test(e.address.trim()) ? e.address.trim() : undefined;
   if (!address && !stremio) { drop(`${id}: no valid address`); return null; }
-  const https = (v) => (typeof v === "string" && /^https:\/\/\S+$/.test(v.trim()) ? v.trim() : undefined);
+  // An icon or screenshot is loaded by Kino's own image loader: https on a public host only (StoreEntries.isPublicHttps).
+  const https = (v) => {
+    if (typeof v !== "string" || !/^https:\/\/\S+$/.test(v.trim())) return undefined;
+    let host;
+    try { host = new URL(v.trim()).hostname; } catch { return undefined; }
+    return host.replace(/\.+$/, "").includes(".") && !hostRulesLocal(host) ? v.trim() : undefined;
+  };
   const strings = (v, max, each) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).slice(0, max).map((x) => x.trim().slice(0, each)) : undefined);
   const out = { id, name };
   if (address) out.address = address;
@@ -940,8 +947,9 @@ function storeAnswer(fn, v, drop) {
   if (sync && typeof v.full !== "boolean") throw new Error("storeSync didn't return { full: true | false, entries }");
   const kept = [];
   const seen = new Set();
+  const cap = sync ? S.limits.maxEntriesPerSync : S.limits.maxEntriesPerLivePage;
   for (const raw of v.entries) {
-    if (kept.length >= S.limits.maxEntriesPerSync) { drop(`beyond ${S.limits.maxEntriesPerSync} entries dropped`); break; }
+    if (kept.length >= cap) { drop(`beyond ${cap} entries dropped`); break; }
     const e = storeEntry(raw, drop);
     const key = e && (e.address || e.stremio);
     if (!e || seen.has(key)) continue;
