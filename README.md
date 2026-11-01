@@ -266,6 +266,19 @@ de bloqueo del dueño se refresca con cada sincronización de tiendas.
 La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://kinotvapp.github.io/kino-plugins/identity/>,
 <https://kinotvapp.github.io/kino-plugins/notifications/>.
 
+## apiVersion 16 and 17 (Kino 0.9.78 and the next Kino) / apiVersion 16 y 17 (Kino 0.9.78 y la próxima versión)
+
+- **apiVersion 16, `coins`:** `kino.coins.balance()` and `kino.coins.give({ to, postId })`. The kit answers a pretend balance with the app's
+  gates (`KINO_COINS_*`, `coinsRevoked`); `give` only from a screen, `screenEvent` or `panelAction`.
+  / `kino.coins.balance()` y `kino.coins.give(...)`: el kit responde un saldo de mentira con las mismas reglas de la app.
+- **`kino.sync.active()` and `kino.sync.setActive(on)` (Kino 0.9.78, not an apiVersion):** for a `syncProvider` plugin; the kit logs what Kino would ask.
+- **apiVersion 17 (arrives with the next Kino, no number yet):** `kino.library.stats({ month })` (a month's aggregates; the fixture's `stats`),
+  jobs with `"perProfile": true` (`kino.jobOn`, the `enableJob` answer, `jobsOn` in `createKino`), `kino.tmdb` in jobs, AI runs of 60 s and 20 requests,
+  the `pages` widget and the `hero` text style, the `share` answer, `go.search` with `"scope": "all"` and `go: { syncProvider: true }`.
+  Every rule is in [the docs](https://kinotvapp.github.io/kino-plugins/en/changelog/).
+  / apiVersion 17 (con la próxima versión de Kino, aún sin número): `kino.library.stats`, trabajos `perProfile`, `kino.tmdb` en trabajos, ejecuciones de IA de 60 s y 20 peticiones,
+  el widget `pages`, el estilo `hero`, la respuesta `share`, `go.search` con `scope: "all"` y `go: { syncProvider: true }`.
+
 ## Tests
 
 ```

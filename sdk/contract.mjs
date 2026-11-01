@@ -263,6 +263,18 @@ export function liveChannelGoRefusal(manifest, trigger) {
 }
 
 /**
+ * ScreenGo.SyncProvider refusal: why a kept `go.syncProvider` from [manifest]'s plugin is not honoured for an event of [trigger]
+ * ("press", "submit", "change", "open", "timer", ...), or null when Kino opens its provider settings. Not the person's own press or
+ * submit: "not_press"; a plugin that does not declare the syncProvider capability: goSyncProvider.notSyncProviderLog.
+ */
+export function syncProviderGoRefusal(manifest, trigger) {
+  const P = contract.manifest.screen.goSyncProvider;
+  if (!P.fromTriggers.includes(trigger)) return "not_press";
+  if (!(manifest?.capabilities ?? []).includes(P.needsCapability)) return P.notSyncProviderLog;
+  return null;
+}
+
+/**
  * ScreenUrl.cleanTitle (Task 8s fix round 1, M3): goUrl.titleScrubPattern's characters removed, runs of combining marks cut to
  * goUrl.maxCombiningMarks, trimmed.
  */
@@ -857,7 +869,7 @@ function validateManifestObject(o, { knownPermissions = contract.permissions } =
   // apiVersion 14, `jobs` (Task 8q, PluginJobs.parse): the background jobs of the `schedule` capability; each needs the other.
   let jobs = [];
   if (o.apiVersion >= contract.kinoJobs.apiVersion) {
-    const parsedJobs = parseJobs(o.jobs, caps, o.settings || []);
+    const parsedJobs = parseJobs(o.jobs, caps, o.settings || [], o.apiVersion);
     if (parsedJobs.message) return bad(caps.includes(contract.kinoJobs.capability) && !has(o, "jobs") ? "capabilities" : "jobs", parsedJobs.message);
     jobs = parsedJobs.jobs;
   }
@@ -991,10 +1003,10 @@ const JOB_LABEL_SCRUB = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u
 
 /**
  * The manifest's `jobs` as the app's PluginJobs.parse reads it: `{ jobs }` (each `{ id, label, labelEn, everyMin, everyOptions }`,
- * labels scrubbed, options sorted, runOn "any" or "preferPhone") or `{ message }` (contract.kinoJobs.manifest). Other keys of a job
+ * labels scrubbed, options sorted, runOn "any" or "preferPhone", perProfile true or false) or `{ message }` (contract.kinoJobs.manifest). Other keys of a job
  * are ignored. Shared cases: test/job-cases.json (run by the app too).
  */
-export function parseJobs(raw, caps, settings = []) {
+export function parseJobs(raw, caps, settings = [], apiVersion = contract.apiVersion) {
   const J = contract.kinoJobs;
   const M = J.manifest;
   const declared = caps.includes(J.capability);
@@ -1036,7 +1048,16 @@ export function parseJobs(raw, caps, settings = []) {
       if (typeof j.enabledBy !== "string" || !settings.some((s) => s && s.key === j.enabledBy && s.type === "toggle")) return { message: M.badEnabledBy };
       enabledBy = j.enabledBy;
     }
-    out.push({ id: j.id, label: es, labelEn: en, everyMin: every, everyOptions: options.sort((a, b) => a - b), runOn, enabledBy });
+    // apiVersion 17 (Tu mes en Kino): a job that serves every profile of the device, on every device that holds one.
+    let perProfile = false;
+    if (j.perProfile !== undefined && j.perProfile !== null) {
+      if (typeof j.perProfile !== "boolean") return { message: M.badPerProfile };
+      perProfile = j.perProfile;
+    }
+    if (perProfile && apiVersion < M.perProfileApiVersion) return { message: M.perProfileApi };
+    if (perProfile && runOn !== M.runOnDefault) return { message: M.perProfileNeedsAny };
+    if (perProfile && enabledBy !== null) return { message: M.perProfileEnabledBy };
+    out.push({ id: j.id, label: es, labelEn: en, everyMin: every, everyOptions: options.sort((a, b) => a - b), runOn, enabledBy, perProfile });
   }
   return { jobs: out };
 }
