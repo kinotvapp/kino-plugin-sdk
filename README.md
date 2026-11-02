@@ -294,8 +294,14 @@ These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kin
   both blocks like the app (also inside `enhancements["20"]`), fails a declared call or stream without its `proto_<door>_<name>` export, and
   warns about a consumed repo missing from `"recommends"` and an `everySeconds` outside 30..86400.
 - **Start from a scaffold:** `node sdk/init.mjs my-provider --kind provider` (provides-only, one door with a call and a stream, its own test)
-  or `node sdk/init.mjs my-consumer --kind consumer --repo owner/provider-repo --host <the host your screen shows content from>` (a screen
-  with the install gate, the error codes and a stream switch, tested against a stand-in provider). `node sdk/init.mjs --help` lists the options.
+  or `node sdk/init.mjs my-consumer --kind consumer --repo owner/provider-repo --door <door> --call <call> --host <the host your screen shows content from>`
+  (a screen with the install gate, one compact bar, a detail route, the error codes and a stream switch, tested against `test/provider`: a
+  **stand-in** that opens the same door, call and stream names; replace it with a copy of the real provider, see its README). `--door`,
+  `--call` and `--stream` (default `quotes`, `byId`, `latest`) take the real door's names, for a provider too. `node sdk/init.mjs --help`
+  lists the options. Copy `sdk/` (without `sdk/test/`) and `contract.json` (required) next to the plugin; `kino.d.ts` is optional (editor typings).
+- **Placeholder hosts:** `validate.mjs` warns (`!`, still accepted) on a `hosts` entry such as `example.com`, `*.example.com`, `example.org`
+  or anything under `.test`, `.invalid` or `.example`; a screen that loads nothing of its own reads
+  [the text-only consumer](https://kinotvapp.github.io/kino-plugins/en/protocol/#text-only-consumer).
 - **`run.mjs --provider <folder>`** (repeatable): the consumer's `kino.plugins.call` is answered by the plugin in that folder, in its own sandbox;
   without `--provider` a call rejects with `provider_missing`. A small provider and consumer to try it are in `fixtures/protocol/`:
   `node sdk/run.mjs --context '{"installed":{"kinotvapp/kino-plugin-tmdb":true}}' --provider fixtures/protocol/provider fixtures/protocol/consumer screen`
@@ -318,7 +324,10 @@ Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino a
   `validate.mjs` revisa los dos bloques como la app, falla si falta la exportación `proto_<puerta>_<nombre>` de una llamada o flujo declarado y avisa
   si el repo consumido no está en `"recommends"`.
 - **Empieza con una plantilla:** `node sdk/init.mjs mi-proveedor --kind provider` o
-  `node sdk/init.mjs mi-consumidor --kind consumer --repo dueño/repo-del-proveedor --host <el host del que tu pantalla muestra contenido>`.
+  `node sdk/init.mjs mi-consumidor --kind consumer --repo dueño/repo-del-proveedor --door <puerta> --call <llamada> --host <el host del que tu pantalla muestra contenido>`.
+  `test/provider` es un proveedor **de reemplazo**: cámbialo por una copia del proveedor real (lee su README). `validate.mjs` avisa (`!`, sin rechazar)
+  si un host es de relleno (`example.com`, `*.example.com`, `example.org`, `.test`, `.invalid`, `.example`); si tu pantalla no carga nada propio, lee
+  [el consumidor que solo muestra texto](https://kinotvapp.github.io/kino-plugins/protocol/#text-only-consumer).
 - **`run.mjs --provider <carpeta>`** (repetible): el `kino.plugins.call` del consumidor lo responde el plugin de esa carpeta, en su propio sandbox; sin
   `--provider` la llamada se rechaza con `provider_missing`. En `fixtures/protocol/` hay un proveedor y un consumidor pequeños para probarlo.
   Un proveedor solo: `node sdk/run.mjs <carpeta> proto <puerta>.<llamada> '<json>'` (un flujo: `proto <puerta>.<flujo> ['<cursor>']`).
