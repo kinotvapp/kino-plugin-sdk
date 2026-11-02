@@ -285,24 +285,44 @@ These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kin
 
 - **apiVersion 18 and 19:** app themes (`appThemes`) and the `lyrics` capability, with an audio item's `ids` (`isrc`, `musicbrainz`, `youtube`).
 - **apiVersion 20, the plugin protocol:** a provider plugin opens named doors (`"provides"`) and a consumer uses them through Kino
-  (`"consumes"` and `kino.plugins.call(alias, door, argument)`); no plugin ever calls another directly. Types are a small closed language
+  (`"consumes"` and `kino.plugins.call(alias, call, argument)`); no plugin ever calls another directly. Types are a small closed language
   (`string`, `number`, `boolean`, `T?`, `T[]`, named and inline objects); a request is checked strictly and a response loosely, and the errors
-  are `bad_input`, `bad_output`, `not_declared`, `provider_missing`, `provider_failed` and `rate_limited`. A plugin that only provides doors
-  may declare `"providesOnly": true` (no hosts, no capabilities). A consumer's arguments reach the provider, which may send them to its own hosts:
-  never pass what you would not hand to the provider's author. `validate.mjs` checks both blocks like the app (also inside `enhancements["20"]`).
+  are `provider_missing`, `not_declared`, `bad_input`, `bad_output`, `rate_limited`, `timeout` and `provider_failed`. A plugin whose only
+  purpose is to provide (apiVersion 20, a non-empty `"provides"`, no capabilities, no settings) is **provides-only** and may leave `"hosts"`
+  empty. That is derived from the manifest: there is no `providesOnly` field (`validate.mjs` warns if you write one). A consumer's arguments
+  reach the provider, which may send them to its own hosts: never pass what you would not hand to the provider's author. `validate.mjs` checks
+  both blocks like the app (also inside `enhancements["20"]`), fails a declared call or stream without its `proto_<door>_<name>` export, and
+  warns about a consumed repo missing from `"recommends"` and an `everySeconds` outside 30..86400.
+- **Start from a scaffold:** `node sdk/init.mjs my-provider --kind provider` (provides-only, one door with a call and a stream, its own test)
+  or `node sdk/init.mjs my-consumer --kind consumer --repo owner/provider-repo --host <the host your screen shows content from>` (a screen
+  with the install gate, the error codes and a stream switch, tested against a stand-in provider). `node sdk/init.mjs --help` lists the options.
 - **`run.mjs --provider <folder>`** (repeatable): the consumer's `kino.plugins.call` is answered by the plugin in that folder, in its own sandbox;
   without `--provider` a call rejects with `provider_missing`. A small provider and consumer to try it are in `fixtures/protocol/`:
-  `node sdk/run.mjs --provider fixtures/protocol/provider fixtures/protocol/consumer screenEvent play`.
-  The rules are in [the docs](https://kinotvapp.github.io/kino-plugins/en/changelog/).
+  `node sdk/run.mjs --context '{"installed":{"kinotvapp/kino-plugin-tmdb":true}}' --provider fixtures/protocol/provider fixtures/protocol/consumer screen`
+  (it prints no "dropped" line; add `--lang en` for the English texts) and
+  `node sdk/run.mjs --context '{"installed":{"kinotvapp/kino-plugin-tmdb":true}}' --provider fixtures/protocol/provider fixtures/protocol/consumer screenEvent play`.
+  `screenEvent protocol <alias>.<stream>` polls a stream once (`--cursor '<json>'` polls from a given cursor).
+- **A provider on its own:** `node sdk/run.mjs <provider folder> proto <door>.<call> '<argument json>'` and
+  `node sdk/run.mjs <provider folder> proto <door>.<stream> ['<cursor json>']`, with the app's checks and error codes (exit 0 with the checked
+  answer, 1 with `✗ <code>: <message>`, 2 for a bad command).
+  The rules: [The plugin protocol](https://kinotvapp.github.io/kino-plugins/en/protocol/) (Spanish:
+  [El protocolo entre plugins](https://kinotvapp.github.io/kino-plugins/protocol/)).
 
 Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino anterior los rechaza.
 
 - **apiVersion 18 y 19:** temas de la app (`appThemes`) y la capability `lyrics`, con los `ids` de un ítem de audio (`isrc`, `musicbrainz`, `youtube`).
 - **apiVersion 20, el protocolo entre plugins:** un plugin proveedor abre puertas con nombre (`"provides"`) y uno consumidor las usa a través de Kino
-  (`"consumes"` y `kino.plugins.call(alias, puerta, argumento)`); ningún plugin llama a otro directamente. Los argumentos del consumidor llegan al
-  proveedor, que puede enviarlos a sus propios hosts: no pases lo que no le darías a quien lo escribió. `validate.mjs` revisa los dos bloques como la app.
+  (`"consumes"` y `kino.plugins.call(alias, llamada, argumento)`); ningún plugin llama a otro directamente. Un plugin que solo provee (apiVersion 20,
+  `"provides"` no vacío, sin capabilities ni settings) puede dejar `"hosts"` vacío; eso se deduce del manifest: no existe un campo `providesOnly`.
+  Los argumentos del consumidor llegan al proveedor, que puede enviarlos a sus propios hosts: no pases lo que no le darías a quien lo escribió.
+  `validate.mjs` revisa los dos bloques como la app, falla si falta la exportación `proto_<puerta>_<nombre>` de una llamada o flujo declarado y avisa
+  si el repo consumido no está en `"recommends"`.
+- **Empieza con una plantilla:** `node sdk/init.mjs mi-proveedor --kind provider` o
+  `node sdk/init.mjs mi-consumidor --kind consumer --repo dueño/repo-del-proveedor --host <el host del que tu pantalla muestra contenido>`.
 - **`run.mjs --provider <carpeta>`** (repetible): el `kino.plugins.call` del consumidor lo responde el plugin de esa carpeta, en su propio sandbox; sin
   `--provider` la llamada se rechaza con `provider_missing`. En `fixtures/protocol/` hay un proveedor y un consumidor pequeños para probarlo.
+  Un proveedor solo: `node sdk/run.mjs <carpeta> proto <puerta>.<llamada> '<json>'` (un flujo: `proto <puerta>.<flujo> ['<cursor>']`).
+  Las reglas: [El protocolo entre plugins](https://kinotvapp.github.io/kino-plugins/protocol/).
 
 ## Tests
 
