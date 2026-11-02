@@ -284,6 +284,13 @@ La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://ki
 These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kino before it refuses them.
 
 - **apiVersion 18 and 19:** app themes (`appThemes`) and the `lyrics` capability, with an audio item's `ids` (`isrc`, `musicbrainz`, `youtube`).
+- **apiVersion 19, screen additions:** `go: { installPlugin: { repo } }` (Kino's install sheet over your own screen), the manifest's
+  `"recommends"` and the `installed` argument of `screen` and `screenEvent`, `Scaffold.onBack`, `AppBar.mergeWithKinoBar`, and text fields that
+  hide the keyboard on submit. `enhancements` may now carry `visualBrowser`.
+- **apiVersion 20, `kino.visualBrowser`:** the manifest key `"visualBrowser": true` and `kino.visualBrowser.available()` / `.open({ url, title,
+  doneWhen, collect, userAgent, timeoutMs })`: a web window the person sees and drives (Android phone and tablet; experimental on TV), on the
+  plugin's own `hosts`, to sign in or finish a step. Kino asks in its own sheet at every open; `collect` can return the cookies, the page's
+  HTML or the final address, or store them straight into a secret setting (`storeAs`). `run.mjs` and `validate.mjs` check it like the app.
 - **apiVersion 20, the plugin protocol:** a provider plugin opens named doors (`"provides"`) and a consumer uses them through Kino
   (`"consumes"` and `kino.plugins.call(alias, call, argument)`); no plugin ever calls another directly. Types are a small closed language
   (`string`, `number`, `boolean`, `T?`, `T[]`, named and inline objects); a request is checked strictly and a response loosely, and the errors
@@ -317,6 +324,13 @@ These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kin
 Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino anterior los rechaza.
 
 - **apiVersion 18 y 19:** temas de la app (`appThemes`) y la capability `lyrics`, con los `ids` de un ítem de audio (`isrc`, `musicbrainz`, `youtube`).
+- **apiVersion 19, pantallas:** `go: { installPlugin: { repo } }` (la hoja de instalación de Kino sobre tu propia pantalla), `"recommends"` en el manifest
+  y el argumento `installed` de `screen` y `screenEvent`, `Scaffold.onBack`, `AppBar.mergeWithKinoBar` y campos de texto que esconden el teclado al enviar.
+  `enhancements` ahora puede llevar `visualBrowser`.
+- **apiVersion 20, `kino.visualBrowser`:** la clave `"visualBrowser": true` del manifest y `kino.visualBrowser.available()` / `.open({ url, title,
+  doneWhen, collect, userAgent, timeoutMs })`: una ventana web que la persona ve y maneja (teléfono y tableta Android; experimental en TV), sobre los
+  `hosts` del plugin, para iniciar sesión o terminar un paso. Kino pregunta en su propia hoja en cada apertura; `collect` puede devolver las cookies, el HTML
+  o la dirección final, o guardarlas directo en un ajuste secreto (`storeAs`). `run.mjs` y `validate.mjs` lo revisan como la app.
 - **apiVersion 20, el protocolo entre plugins:** un plugin proveedor abre puertas con nombre (`"provides"`) y uno consumidor las usa a través de Kino
   (`"consumes"` y `kino.plugins.call(alias, llamada, argumento)`); ningún plugin llama a otro directamente. Un plugin que solo provee (apiVersion 20,
   `"provides"` no vacío, sin capabilities ni settings) puede dejar `"hosts"` vacío; eso se deduce del manifest: no existe un campo `providesOnly`.
