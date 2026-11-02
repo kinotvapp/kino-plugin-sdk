@@ -279,13 +279,38 @@ La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://ki
   / apiVersion 17 (con la próxima versión de Kino, aún sin número): `kino.library.stats`, trabajos `perProfile`, `kino.tmdb` en trabajos, ejecuciones de IA de 60 s y 20 peticiones,
   el widget `pages`, el estilo `hero`, la respuesta `share`, `go.search` con `scope: "all"` y `go: { syncProvider: true }`.
 
+## apiVersion 18 to 20 (Kino 0.9.81, not published yet) / apiVersion 18 a 20 (Kino 0.9.81, aún sin publicar)
+
+These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kino before it refuses them.
+
+- **apiVersion 18 and 19:** app themes (`appThemes`) and the `lyrics` capability, with an audio item's `ids` (`isrc`, `musicbrainz`, `youtube`).
+- **apiVersion 20, the plugin protocol:** a provider plugin opens named doors (`"provides"`) and a consumer uses them through Kino
+  (`"consumes"` and `kino.plugins.call(alias, door, argument)`); no plugin ever calls another directly. Types are a small closed language
+  (`string`, `number`, `boolean`, `T?`, `T[]`, named and inline objects); a request is checked strictly and a response loosely, and the errors
+  are `bad_input`, `bad_output`, `not_declared`, `provider_missing`, `provider_failed` and `rate_limited`. A plugin that only provides doors
+  may declare `"providesOnly": true` (no hosts, no capabilities). A consumer's arguments reach the provider, which may send them to its own hosts:
+  never pass what you would not hand to the provider's author. `validate.mjs` checks both blocks like the app (also inside `enhancements["20"]`).
+- **`run.mjs --provider <folder>`** (repeatable): the consumer's `kino.plugins.call` is answered by the plugin in that folder, in its own sandbox;
+  without `--provider` a call rejects with `provider_missing`. A small provider and consumer to try it are in `fixtures/protocol/`:
+  `node sdk/run.mjs --provider fixtures/protocol/provider fixtures/protocol/consumer screenEvent play`.
+  The rules are in [the docs](https://kinotvapp.github.io/kino-plugins/en/changelog/).
+
+Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino anterior los rechaza.
+
+- **apiVersion 18 y 19:** temas de la app (`appThemes`) y la capability `lyrics`, con los `ids` de un ítem de audio (`isrc`, `musicbrainz`, `youtube`).
+- **apiVersion 20, el protocolo entre plugins:** un plugin proveedor abre puertas con nombre (`"provides"`) y uno consumidor las usa a través de Kino
+  (`"consumes"` y `kino.plugins.call(alias, puerta, argumento)`); ningún plugin llama a otro directamente. Los argumentos del consumidor llegan al
+  proveedor, que puede enviarlos a sus propios hosts: no pases lo que no le darías a quien lo escribió. `validate.mjs` revisa los dos bloques como la app.
+- **`run.mjs --provider <carpeta>`** (repetible): el `kino.plugins.call` del consumidor lo responde el plugin de esa carpeta, en su propio sandbox; sin
+  `--provider` la llamada se rechaza con `provider_missing`. En `fixtures/protocol/` hay un proveedor y un consumidor pequeños para probarlo.
+
 ## Tests
 
 ```
 node --test sdk/test/*.test.mjs
 ```
 
-Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason. The apiVersion 15 tests (identity, notifications, stores, `init --store`) run here.
+Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason. The apiVersion 20 protocol tests run here too, against `fixtures/protocol/`. The apiVersion 15 tests (identity, notifications, stores, `init --store`) run here.
 Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
 catalog's shared test vectors: they run in the app's repository. So do the check of the `--bundle` scaffold against the
 guide's bundled example and the user interface reference's tests, which read only that page and its example plugins
