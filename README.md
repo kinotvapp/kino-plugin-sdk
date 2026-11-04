@@ -279,9 +279,9 @@ La guía: <https://kinotvapp.github.io/kino-plugins/plugin-stores/>, <https://ki
   / apiVersion 17 (con la próxima versión de Kino, aún sin número): `kino.library.stats`, trabajos `perProfile`, `kino.tmdb` en trabajos, ejecuciones de IA de 60 s y 20 peticiones,
   el widget `pages`, el estilo `hero`, la respuesta `share`, `go.search` con `scope: "all"` y `go: { syncProvider: true }`.
 
-## apiVersion 18 to 20 (Kino 0.9.81, not published yet) / apiVersion 18 a 20 (Kino 0.9.81, aún sin publicar)
+## apiVersion 18 to 20 (Kino 0.9.81) / apiVersion 18 a 20 (Kino 0.9.81)
 
-These numbers carry API of **Kino 0.9.81, which is not released yet**; every Kino before it refuses them.
+These numbers carry API of **Kino 0.9.81**; every Kino before it refuses them.
 
 - **apiVersion 18 and 19:** app themes (`appThemes`) and the `lyrics` capability, with an audio item's `ids` (`isrc`, `musicbrainz`, `youtube`).
 - **apiVersion 19, screen additions:** `go: { installPlugin: { repo } }` (Kino's install sheet over your own screen), the manifest's
@@ -352,6 +352,23 @@ Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino a
   `--provider` la llamada se rechaza con `provider_missing`. En `fixtures/protocol/` hay un proveedor y un consumidor pequeños para probarlo.
   Un proveedor solo: `node sdk/run.mjs <carpeta> proto <puerta>.<llamada> '<json>'` (un flujo: `proto <puerta>.<flujo> ['<cursor>']`).
   Las reglas: [El protocolo entre plugins](https://kinotvapp.github.io/kino-plugins/protocol/).
+
+## apiVersion 21 (Kino 0.9.82) / apiVersion 21 (Kino 0.9.82)
+
+- **apiVersion 21, `files`:** the capability for a plugin that works with files on the person's device (a reader, a music or video player).
+  `kino.files.pick({ kinds?, multiple?, copy? })` and `pickFolder({ kinds? })` open Kino's picker and answer opaque handles, never an address;
+  `list`, `folders`, `info`, `read(id, { start?, end? })`, `readText`, `forget` and `url(id)` (`kino-file:<id>`, which a stream's or an audio
+  track's `url` may carry) work with them. `pick` and `pickFolder` run only from a press (a settings action, a `panelAction` or a `screenEvent`
+  that follows a tap or submit). The kit answers from the folder named by `KINO_FILES_DIR` (default `./.kino-files`), with the app's limits and
+  error codes. Nothing is uploaded or sent anywhere. Every rule is in the guide, "Files on the device".
+  / `files`: archivos del aparato de la persona. `kino.files.pick` y `pickFolder` abren el selector de Kino y devuelven manijas opacas;
+  `read` lee por rangos y `url(id)` da una dirección `kino-file:` para reproducir. El kit responde desde la carpeta `KINO_FILES_DIR`.
+- **Screens, additive (no new apiVersion; an older Kino ignores them):** `onSwipeLeft` / `onSwipeRight` on any node, an `Image` `url` that is a
+  `data:image/png|jpeg|webp|gif;base64,…` (up to 200,000 characters), `divider: false` on `AppBar` and `TabBar`, and `logo` and `h` on `heroCard`.
+  / Pantallas, sin apiVersion nuevo: deslizar a los lados, imágenes `data:`, `divider: false` y `logo`/`h` en `heroCard`.
+- **App themes, additive:** `colors.border` and the borders `shape.dialogBorder`, `menuBorder`, `headerBorder`, `cardBorder` and `panelBorder`
+  (0 to 4 dp; Kino has none until a theme asks), and a light background is accepted when the theme brings its own readable text.
+  / Temas: `colors.border` y los bordes `shape.*Border`; un fondo claro se acepta si el tema trae su propio texto legible.
 
 ## Tests
 
