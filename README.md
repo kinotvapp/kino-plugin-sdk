@@ -370,6 +370,21 @@ Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino a
   (0 to 4 dp; Kino has none until a theme asks), and a light background is accepted when the theme brings its own readable text.
   / Temas: `colors.border` y los bordes `shape.*Border`; un fondo claro se acepta si el tema trae su propio texto legible.
 
+## apiVersion 22 (the next Kino) / apiVersion 22 (la próxima versión de Kino)
+
+- **apiVersion 22, `progress`:** the capability for a plugin that keeps where the person is in something that is not a video (a chapter, a
+  book, an episode of audio). `kino.progress.set({ id, fraction, title?, label?, labelEn?, poster?, resume?, done?, doneAt? })`, `get(id)`,
+  `clear(id)` and `list({ limit?, sinceMs? })`. Kino draws nothing from it: you build your own "keep reading" shelf from `list`, and `resume`
+  is your own JSON (up to 1 KB) that comes back as you set it. It needs no approval line and no extra host. The kit keeps the elements in memory
+  for the run, with the app's argument rules, limits (500 elements, 80-character labels) and error codes. Every rule is in the guide,
+  "Saving where the person is".
+  / `progress`: guarda en qué punto va la persona en algo que no es video (un capítulo, un libro). `kino.progress.set`, `get`, `clear` y `list`;
+  Kino no dibuja nada con ello: tú armas tu propio estante con `list`, y `resume` es tu JSON (hasta 1 KB). El kit lo guarda en memoria durante la corrida.
+- **Screens, additive (Kino 0.9.83; an older Kino ignores it):** an `Image` takes `headers: { Referer?, User-Agent? }`, for a site that serves
+  its pictures only to requests that carry its own page. They are sent only when the picture's host is in your manifest's `hosts`; the kit
+  reads and validates them like the app does. See "Pictures that need a Referer" in the user interface reference.
+  / Pantallas, sin apiVersion nuevo: una `Image` acepta `headers` (`Referer` y `User-Agent`) para sitios que solo sirven sus imágenes a quien trae su página; solo se envían a hosts de tu manifest.
+
 ## Tests
 
 ```
