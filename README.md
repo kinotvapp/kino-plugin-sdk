@@ -385,6 +385,19 @@ Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino a
   reads and validates them like the app does. See "Pictures that need a Referer" in the user interface reference.
   / Pantallas, sin apiVersion nuevo: una `Image` acepta `headers` (`Referer` y `User-Agent`) para sitios que solo sirven sus imágenes a quien trae su página; solo se envían a hosts de tu manifest.
 
+## apiVersion 23 (the next Kino, provisionally 0.9.83) / apiVersion 23 (la próxima versión de Kino, provisionalmente la 0.9.83)
+
+- **apiVersion 23, `playerSlot`:** up to three small elements (a `text`, an `icon`, an `image` or a `button`) in the top-right corner of the
+  TV player, declared in the manifest's `slot` block (1 to 3 `{ id, kind, mode }`, `mode` `overlay` with the controls or `fixed` all the time)
+  and filled by your `playerSlot(context)` export (`{ items, refreshMs }`, 2,000 to 60,000 ms); a press calls `playerSlotAction({ id, context })`
+  (`{ openPanel?, player? }`). A `fixed` element shows a red approval line. The kit's `sdk/slot.mjs` reads a frame and a press the way the app
+  does: `node sdk/run.mjs <folder> playerSlot [ref]`, `node sdk/run.mjs <folder> playerSlotAction <ref> <button id>`, with `--bare`,
+  `--foreign` and `--live-channel` for the other contexts; `validate.mjs` checks the block and both exports. A complete clock is on the
+  guide's "The player slot" page.
+  / `playerSlot`: hasta tres elementos pequeños en la esquina superior derecha del reproductor de la TV, declarados en el bloque `slot` del
+  manifiesto y llenados por `playerSlot(context)`; un toque llama a `playerSlotAction`. Un elemento `fixed` pide aprobación en rojo. El kit
+  los prueba con `run.mjs playerSlot` y `run.mjs playerSlotAction`.
+
 ## Tests
 
 ```
