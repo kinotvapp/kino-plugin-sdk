@@ -397,6 +397,15 @@ Estos números traen API de **Kino 0.9.81, que aún no se publica**; todo Kino a
   / `playerSlot`: hasta tres elementos pequeños en la esquina superior derecha del reproductor de la TV, declarados en el bloque `slot` del
   manifiesto y llenados por `playerSlot(context)`; un toque llama a `playerSlotAction`. Un elemento `fixed` pide aprobación en rojo. El kit
   los prueba con `run.mjs playerSlot` y `run.mjs playerSlotAction`.
+- **The look of a slot text and where it sits (no new apiVersion):** a `text` item may carry `size` (`small`, `normal`, `large`, `xlarge`),
+  `weight` (`extralight`, `light`, `normal`, `medium`, `semibold`, `bold`), `color` and `background` (`#RRGGBB` or `#RRGGBBAA`; a
+  `background` with alpha 0 draws no pill), and any item may carry `left` and `top` (whole dp, clamped, to nudge it). Each invalid field is
+  ignored on its own, the letters never get less than half opacity, and a `color` that cannot be read on its opaque pill is dropped.
+  The kit's `sdk/slot.mjs` applies the same rules. A plugin offers them as ordinary settings, as the clock example does (a time zone as a
+  fixed UTC offset that does not follow daylight saving time, size, weight, colour, background and position).
+  / Un `text` puede traer `size`, `weight`, `color` y `background`, y cualquier elemento `left` y `top` (dp enteros, acotados) para
+  moverlo; Kino ignora cada campo inválido y mantiene el texto legible. El reloj de ejemplo los ofrece como ajustes, con la zona horaria
+  como un desfase fijo respecto de UTC (no sigue el horario de verano).
 
 ## Tests
 
