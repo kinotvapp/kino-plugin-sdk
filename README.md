@@ -31,6 +31,39 @@ lado. Copia las dos a tu plugin, o parte de una plantilla que ya las trae:
 
 `kino.d.ts` gives your editor the types of the global `kino` object.
 
+## See it drawn: the `kino-parity` companion / Verlo dibujado: el complemento `kino-parity`
+
+The kit checks and runs a plugin with the app's rules, but it never draws a screen, opens a real socket or presses a
+button: `run.mjs . screen` prints the validated tree. **`kino-parity`** is a companion repository (a separate clone; it
+installs nothing here) that puts this kit in front of the app's own renderer, taken from the published APK, and drives
+it: it draws every frame with the renderer Kino ships, taps by `key`, types, goes back, records what changed and leaves
+one folder per step with the screen as text, the canonical HTML and, when a browser is available, a screenshot.
+
+```
+git clone <kino-parity>                 # the companion, not this repo
+cd kino-parity && npm ci
+npx kino-parity setup                   # clones this kit into vendor/, pinned by commit + apiVersion + tree hash
+npx kino-parity doctor                  # kit version, APK lock, render level (text only / + PNG)
+npx kino-parity open --plugin ../my-plugin --device tv --size compact --out runs/my-plugin/1
+npx kino-parity tap  --run runs/my-plugin/1 --key sk:play
+npx kino-parity digest --run runs/my-plugin/1
+```
+
+It never edits the copy of the kit it uses: `vendor/kino-plugin-sdk` is read-only and `setup` replaces it whole, so this
+repository's `sdk/` stays dependency-free. Without a browser it still renders and drives the screens with jsdom; only
+the PNG needs Chromium. Levels, flags and the agent loop: the companion's `README.md` and `AGENTS.md`.
+
+El kit revisa y corre un plugin con las reglas de la app, pero no dibuja una pantalla, no abre una conexión real ni
+pulsa un botón: `run.mjs . screen` imprime el árbol validado. **`kino-parity`** es un repositorio complemento (un clon
+aparte; no instala nada aquí) que pone este kit delante del renderizador de la propia app, sacado del APK publicado, y
+lo conduce: dibuja cada frame con el renderizador que trae Kino, pulsa por `key`, escribe, vuelve atrás, anota qué cambió
+y deja una carpeta por paso con la pantalla en texto, el HTML canónico y, si hay navegador, una captura.
+
+No edita nunca la copia del kit que usa: `vendor/kino-plugin-sdk` es de solo lectura y `setup` lo reemplaza entero, así
+que el `sdk/` de este repositorio sigue sin dependencias. Sin navegador también dibuja y conduce las pantallas con
+jsdom; solo el PNG necesita Chromium. Niveles, opciones y el bucle de un agente: el `README.md` y el `AGENTS.md` del
+complemento.
+
 ## Where it differs from the app / Dónde difiere de la app
 
 The kit cannot copy everything the app's engine does (memory and stack limits, the `/v` regex flag, `new URL` with
@@ -674,6 +707,10 @@ The guide: <https://kinotvapp.github.io/kino-plugins/en/identity/>, <https://kin
 ```
 node --test sdk/test/*.test.mjs
 ```
+
+These tests are offline and synthetic on purpose: they check rules, not what the person sees. For behaviour —a drawn
+screen, a real request, a pressed button— use the `kino-parity` companion above: it runs this same `sdk/` against the
+renderer taken from the published app and compares the result with it.
 
 Some tests read files of the app's repository, which this one does not carry; they are skipped here with the reason. The apiVersion 20 protocol tests run here too, against `fixtures/protocol/`. The apiVersion 15 tests (identity, notifications, stores, `init --store`) run here.
 Among them are the tests that run the guide's apiVersion 13 examples (catalog, images, QR, encoded frames) and the
